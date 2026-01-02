@@ -1,0 +1,21 @@
+---
+title: "structure EZ paper"
+author: "Anne Giacobello"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+- General Intro Introduction "BayEZ"
+- Intro to (EZ) DDM 
+  - first DDM then EZ
+	- 2 paragraphs and figure 
+- Individual differences
+	- why hierarchical modelling is a good idea in terms of the EZ
+- Introduce the Hierarchical Bayes EZ DDM
+  - math, formulas and priors
+- Implementation in JAGS and RStan
+- Application
+- Example 
+	- many participants, little trials, one predictor 
+	- Flanker Task with many errors (80% correct) from [[Grabowska et al. (2025) Individual differences in neurophysiological correlates of post-response adaptation]]]]
+	- or use only first block versus last block or so? ([[predictive error negativity]])
