@@ -1,0 +1,353 @@
+---
+title: "pipeline_for_new_plots"
+author: "Anne Giacobello"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+```{r new version with changes marked}
+rm(list = ls())
+setwd("/Users/annegiacobello/Desktop/")
+
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+
+library(R.utils)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(bayesplot)
+library(truncnorm)
+library(purrr)
+library(tictoc)
+
+set.seed(123)
+
+
+stan_model_path <- "/Users/annegiacobello/Desktop/PhD Y1/EZ stan project/models/new_model.stan"
+
+grid_P <- c(20, 160)           # CHANGED from c(20, 60, 160) -- participants per cell
+grid_T <- c(20, 400)           # CHANGED from c(20, 60, 160) -- trials per participant
+n_rep  <- 60                   # replications per grid cell
+save_dir <- getwd()            
+adapt_delta <- 0.9
+max_treedepth <- 10
+iter <- 2000
+warmup <- 1000
+chains <- 4
+
+# sanity check for model file
+if (!file.exists(stan_model_path)) stop("Stan model not found at stan_model_path.")
+
+
+message("Compiling Stan model once...")
+sm <- rstan::stan_model(file = stan_model_path)
+
+
+ez_forward <- function(alpha, nu, tau) {
+  u <- exp(-alpha * nu)
+  Pc <- 1 / (1 + u)
+  nu_safe <- ifelse(abs(nu) < 1e-6, sign(nu) * 1e-6, nu)
+  mu_rt <- tau + (alpha / (2 * nu_safe)) * ((1 - u) / (1 + u))
+  sigma2_rt <- (alpha / (2 * nu_safe^3)) * ((1 - 2 * alpha * nu * u - u^2) / (1 + u)^2)
+  sigma2_rt <- pmax(sigma2_rt, 1e-6)
+  list(Pc = Pc, mu_rt = mu_rt, sigma2_rt = sigma2_rt)
+}
+
+
+simulate_one <- function(P, T, criterion = c("nu","alpha","tau")) {
+  criterion <- match.arg(criterion)
+  I <- P
+  J <- rep(T, I)
+  x <- runif(I, 0, 1)
+
+  mu_alpha <- truncnorm::rtruncnorm(1, a = 0.1, b = 3.0, mean = 1.5, sd = 0.2)
+  mu_nu    <- truncnorm::rtruncnorm(1, a = -3.0, b = 3.0, mean = 0.0, sd = 0.5)
+  mu_tau   <- truncnorm::rtruncnorm(1, a = 0.05, b = Inf, mean = 0.3, sd = 0.06)
+
+  sigma_alpha <- runif(1, 0.1, 0.4)
+  sigma_nu    <- runif(1, 0.2, 0.4)
+  sigma_tau   <- runif(1, 0.05, 0.25)
+
+  delta <- runif(1, 0, 1)
+
+  # x-effect only on nu 
+  alpha <- truncnorm::rtruncnorm(I, a = 0.1, b = 3.0, mean = mu_alpha,          sd = sigma_alpha)
+  nu    <- truncnorm::rtruncnorm(I, a = -3.0, b = 3.0, mean = mu_nu + delta*x,  sd = sigma_nu)
+  tau   <- truncnorm::rtruncnorm(I, a = 0.05, b = Inf, mean = mu_tau,           sd = sigma_tau)
+
+  fwd <- ez_forward(alpha, nu, tau)
+  Pc <- fwd$Pc
+  mu_rt <- fwd$mu_rt
+  sigma2_rt <- fwd$sigma2_rt
+
+  C   <- pmax(2L, rbinom(I, J, Pc))
+  MRT <- rnorm(I, mu_rt, sqrt(sigma2_rt / C))
+  VRT <- rnorm(I, sigma2_rt, sqrt(2 * sigma2_rt^2 / pmax(C - 1, 1)))
+
+  simulation_data <- list(
+    I = I,
+    J = as.integer(J),
+    C = as.integer(C),
+    MRT = as.numeric(MRT),
+    VRT = as.numeric(VRT),
+    x = as.numeric(x)
+  )
+
+  true_vals <- list(
+    mu_alpha = mu_alpha, mu_nu = mu_nu, mu_tau = mu_tau,
+    sigma_alpha = sigma_alpha, sigma_nu = sigma_nu, sigma_tau = sigma_tau,
+    delta = delta,
+    criterion = criterion
+  )
+
+  list(simulation_data = simulation_data, true = true_vals)
+}
+
+
+fit_one <- function(simulation_data) {
+  fit <- rstan::sampling(
+    object   = sm,
+    data     = simulation_data,
+    chains   = chains,
+    iter     = iter,
+    warmup   = warmup,
+    seed     = sample(1:1e6, 1),
+    control  = list(adapt_delta = adapt_delta, max_treedepth = max_treedepth),
+    refresh  = 0
+  )
+  post <- rstan::extract(fit)
+  list(
+    fit = fit,
+    mu_alpha_hat = mean(post$mu_alpha),
+    mu_nu_hat    = mean(post$mu_nu),
+    mu_tau_hat   = mean(post$mu_tau),
+    delta_hat    = mean(post$delta)
+  )
+}
+
+
+
+run_grid <- function(which_criterion = c("nu","alpha","tau"), n_rep = n_rep) {
+  which_criterion <- match.arg(which_criterion)
+
+  total_steps <- length(grid_P) * length(grid_T) * n_rep
+  pb <- utils::txtProgressBar(min = 0, max = total_steps, style = 3)
+  step <- 0
+
+  results <- vector("list", length = length(grid_P) * length(grid_T))
+  idx <- 1
+
+  for (P in grid_P) for (T in grid_T) {
+
+    result_file <- file.path(
+      save_dir, sprintf("partial_%s_P%d_T%d.rds", which_criterion, P, T)
+    )
+
+    if (file.exists(result_file)) {
+      message("Skipping already computed: ", result_file)
+      step <- step + n_rep
+      utils::setTxtProgressBar(pb, step)
+      results[[idx]] <- readRDS(result_file)
+      idx <- idx + 1
+      next
+    }
+
+    message(sprintf("Criterion=%s | P=%d, T=%d", which_criterion, P, T))
+    cell_rows <- vector("list", n_rep)
+
+    for (rep_ix in seq_len(n_rep)) {
+      sim <- simulate_one(P, T, which_criterion)
+
+      if (any(!is.finite(sim$simulation_data$MRT)) ||
+          any(!is.finite(sim$simulation_data$VRT))) {
+        step <- step + 1; utils::setTxtProgressBar(pb, step); next
+      }
+
+      fit <- tryCatch(fit_one(sim$simulation_data), error = function(e) NULL)
+      if (!is.null(fit)) {
+        # only keep beta for the nu-criterion cells
+        cell_rows[[rep_ix]] <- tibble::tibble(
+          crit = which_criterion, P = P, T = T, rep = rep_ix,
+          beta_true = if (which_criterion == "nu") sim$true$delta else NA_real_,
+          mu_true   = sim$true[[paste0("mu_", which_criterion)]],
+          beta_hat  = if (which_criterion == "nu") fit$delta_hat else NA_real_,
+          mu_hat    = fit[[paste0("mu_", which_criterion, "_hat")]]
+        )
+      }
+
+      step <- step + 1
+      utils::setTxtProgressBar(pb, step)
+    }
+
+    cell_df <- dplyr::bind_rows(cell_rows)
+    saveRDS(cell_df, result_file)
+    results[[idx]] <- cell_df
+    idx <- idx + 1
+  }
+
+  close(pb)
+  dplyr::bind_rows(results)
+}
+
+
+make_band <- function(df, xvar, yvar, nbins = 16) {
+  if (nrow(df) == 0) return(df %>% mutate(x_mid = !!sym(xvar), med = !!sym(yvar), lo = !!sym(yvar), hi = !!sym(yvar)))
+  df %>%
+    mutate(bin = cut(!!sym(xvar), breaks = nbins, include.lowest = TRUE)) %>%
+    group_by(P, T, bin, crit) %>%
+    summarise(
+      x_mid = mean(range(!!sym(xvar), na.rm = TRUE)),
+      med   = median(!!sym(yvar), na.rm = TRUE),
+      lo    = quantile(!!sym(yvar), 0.025, na.rm = TRUE),
+      hi    = quantile(!!sym(yvar), 0.975, na.rm = TRUE),
+      .groups = "drop"
+    )
+}
+
+plot_recovery_grid <- function(df, xvar, yvar, title) {
+  band <- make_band(df, xvar, yvar)
+  ggplot(df, aes_string(x = xvar, y = yvar)) +
+    geom_point(alpha = 0.25, size = 0.6) +
+    geom_ribbon(
+      data = band, aes(x = x_mid, ymin = lo, ymax = hi), inherit.aes = FALSE, alpha = 0.2
+    ) +
+    geom_line(data = band, aes(x = x_mid, y = med), inherit.aes = FALSE, linewidth = 0.9) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    facet_grid(factor(P, levels = grid_P) ~ factor(T, levels = grid_T)) +
+    labs(x = "True", y = "Posterior mean", title = title) +
+    theme_minimal(base_size = 11)
+}
+
+
+message("Running grid for criterion = nu")
+df_nu    <- run_grid("nu",    n_rep = n_rep)
+message("Running grid for criterion = alpha")
+df_alpha <- run_grid("alpha", n_rep = n_rep)
+message("Running grid for criterion = tau")
+df_tau   <- run_grid("tau",   n_rep = n_rep)
+
+# save results
+saveRDS(df_nu,    file.path(save_dir, "more_grid_results_nu.rds"))
+saveRDS(df_alpha, file.path(save_dir, "more_grid_results_alpha.rds"))
+saveRDS(df_tau,   file.path(save_dir, "more_grid_results_tau.rds"))
+
+```   
+
+read in
+```{r}
+df_nu <- readRDS("/Users/annegiacobello/Desktop/more_grid_results_nu.rds")
+df_alpha <- readRDS("/Users/annegiacobello/Desktop/more_grid_results_alpha.rds")
+df_tau <- readRDS("/Users/annegiacobello/Desktop/more_grid_results_tau.rds")
+```
+
+
+making recovery plots
+```{r}
+grid_P <- c(20, 160)          #c(20, 60, 160)
+grid_T <- c(20, 400)          #c(20, 60, 160)
+# grid_P <- sort(unique(df_all$P))
+# grid_T <- sort(unique(df_all$T))
+
+# make median/CI band
+make_band2 <- function(df, xvar, yvar, nbins = 16) {
+  if (nrow(df) == 0 || !(xvar %in% names(df)) || !(yvar %in% names(df))) {
+    return(tibble(x_mid = numeric(0), med = numeric(0), lo = numeric(0), hi = numeric(0)))
+  }
+  df %>%
+    mutate(bin = cut(.data[[xvar]], breaks = nbins, include.lowest = TRUE)) %>%
+    group_by(P, T, bin, .add = FALSE) %>%
+    summarise(
+      x_mid = mean(range(.data[[xvar]], na.rm = TRUE)),
+      med   = median(.data[[yvar]], na.rm = TRUE),
+      lo    = quantile(.data[[yvar]], 0.025, na.rm = TRUE),
+      hi    = quantile(.data[[yvar]], 0.975, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    filter(is.finite(med))
+}
+
+
+plot_param_grid <- function(df, true_col, hat_col, title,
+                            point_col,
+                            point_alpha = 0.70,
+                            band_alpha  = 0.20,
+                            median_col  = "black") {
+
+  df_plot <- df %>% filter(
+    !is.na(.data[[true_col]]), is.finite(.data[[true_col]]),
+    !is.na(.data[[hat_col]]),  is.finite(.data[[hat_col]])
+  )
+  band <- make_band2(df_plot, true_col, hat_col)
+
+  df_plot <- df_plot %>%
+    mutate(P = factor(P, levels = grid_P),
+           T = factor(T, levels = grid_T))
+  band <- band %>%
+    mutate(P = factor(P, levels = grid_P),
+           T = factor(T, levels = grid_T))
+
+  ggplot(df_plot, aes(.data[[true_col]], .data[[hat_col]])) +
+    geom_point(size = 1.1, na.rm = TRUE,
+               color = point_col, alpha = point_alpha) +
+    geom_ribbon(data = band, aes(x = x_mid, ymin = lo, ymax = hi),
+                inherit.aes = FALSE, fill = point_col, alpha = band_alpha) +
+    # geom_line(data = band, aes(x = x_mid, y = med),
+    #           inherit.aes = FALSE, linewidth = 0.4, color = median_col) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    facet_grid(P ~ T, drop = FALSE,
+               labeller = labeller(
+                 P = function(x) paste0("I = ", x),
+                 T = function(x) paste0("J = ", x)
+               )) +
+    labs(x = "True", y = "Posterior mean", title = title) +
+    theme_minimal(base_size = 11)
+}
+
+my_col1 <- "deeppink3" 
+my_col2 <- "orange2" 
+my_col3 <- "#698B22" 
+```
+
+```{r}
+p_old_mu_alpha <- plot_param_grid(
+  df_alpha, "mu_true", "mu_hat", "recovery μ_α",
+  point_col = my_col1, band_alpha = 0.50
+)
+
+p_old_mu_nu <- plot_param_grid(
+  df_nu, "mu_true", "mu_hat", "recovery μ_ν",
+  point_col = my_col2, band_alpha = 0.50
+)
+
+p_old_mu_tau <- plot_param_grid(
+  df_tau, "mu_true", "mu_hat", "recovery μ_τ",
+  point_col = my_col3, band_alpha = 0.50
+)
+
+ggsave(file.path("/Users/annegiacobello/Desktop/mu_alpha_recovery.png"), p_old_mu_alpha, width = 10, height = 8, dpi = 300)
+ggsave(file.path("/Users/annegiacobello/Desktop/mu_nu_recovery.png"), p_old_mu_nu,    width = 10, height = 8, dpi = 300)
+ggsave(file.path("/Users/annegiacobello/Desktop/mu_tau_recovery.png"), p_old_mu_tau,   width = 10, height = 8, dpi = 300)
+
+p_old_mu_alpha
+p_old_mu_nu
+p_old_mu_tau
+```
+
+
+
+
+
+
+
+
+
