@@ -10,7 +10,8 @@ This repository contains the content and code of this project. The [EZ diffusion
 It simplifies the full diffusion model by focusing on three key parameters: drift rate (the speed of evidence accumulation), boundary separation (decision threshold), and non-decision time (encoding and motor response times). 
 The EZ diffusion model is frequentist, and not hierarchical. Recently, there has been made an effort to [describe a probabilistic version of the EZ-diffusion model that can serve as a proxy model to the drift diffusion model](https://link.springer.com/article/10.3758/s13423-025-02729-y).
 Using [JAGS](https://mcmc-jags.sourceforge.io/), they concluded that the recovery of some parameters was biased, however, generally, the recovery of (regression) parameters was good. 
-We aim to put these recoveries to the test by implementing the model in [RStan](https://mc-stan.org/rstan/), once using the same priors as in the JAGS implementation and once using different priors. We also want to implement condition effects and put an emphasis on individual differences. 
+We put these recoveries to the test by implementing the model in [RStan](https://mc-stan.org/rstan/), once using the same priors as in the JAGS implementation and once using different priors. We also implemented condition effects and put an emphasis on individual differences. 
+Together, we want to put the Bayes EZ DDM to the test and see how one can use it effficiently and how one should work with it in JAGS in Stan in order to get sensible outcomes. 
 
 
 ## Support
