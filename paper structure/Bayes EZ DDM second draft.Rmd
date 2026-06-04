@@ -1,0 +1,841 @@
+---
+title             : "BayEZ (to be edited, my creativity is limited)"
+
+author: 
+  - name          : "Anne Giacobello"
+    affiliation   : "1"
+    address       : "Karl-Liebknecht-Str. 24-25 14476 Potsdam"
+    email         : "anne.giacobello@uni-potsdam.de"
+    
+  - name          : "Adriana F. Chávez De la Peña"
+    affiliation   : "2, 3"
+    
+  - name          : "Julia M. Haaf"
+    affiliation   : "1"
+  
+  - name          : "Joachim Vandekerckhove"
+    affiliation   : "2, 3"
+    
+
+
+affiliation:
+  - id            : "1"
+    institution   : "Department of Psychology, University of Potsdam, Germany"
+  - id            : "2"
+    institution   : "Department of Cognitive Sciences, University of California, Irvine, CA, USA"
+  - id            : "3"
+    institution   : "Department of Statistics, University of California, Irvine, CA, USA"
+    
+authornote: |
+  Anne Giacobello and Adriana F. Chávez De la Peña contributed equally to this work and share first authorship.
+  
+header-includes   :
+   - \usepackage{bm}
+   - \usepackage{float}
+   - \usepackage{amsmath}
+   - \usepackage{setspace}
+   - \usepackage{marginnote}
+   - \setstretch{1.5}
+     
+wordcount         : "added later"
+
+bibliography      : "EZ_Paper.bib"
+
+floatsintext      : no
+figurelist        : no
+tablelist         : no
+footnotelist      : no
+
+linenumbers       : yes
+
+mask              : no
+draft             : no
+
+documentclass     : "apa6"
+classoption       : "doc"
+output:
+  papaja::apa6_pdf:
+    latex_engine: xelatex
+extra_dependencies: ["float"]
+---
+
+
+```{r setup, include = FALSE}
+library("papaja")
+r_refs("EZ_Paper.bib")
+```
+
+# Introduction
+
+## short description ddm
+
+One popular cognitive process model is the drift diffusion model [@ratcliff_theory_1978; @farrell2017drift], originally developed by @stone_models_1960 and @link_relative_1975-1. The model has since become a measurement tool [@vandekerckhove_crossed_2010; @vandekerckhove_hierarchical_2011-1] and is used widely [see, e.g., @myers_practical_2022; @yang2023diffusion; @ratcliff2015modeling]. It describes an information accumulation process in a task with a binary choice. The assumption is that the accumulation process starts as soon as decision-makers are asked to make the binary judgement about presented stimuli and that it stops once a decision boundary is met. According to the principle of accumulation of information [@laming_information_1968] there are two choices to make: When one is ready to respond and what to respond, which are represented in the data by the reaction time (RT) and the choice, respectively.
+
+Four of the seven parameters of the DDM are illustrated in Figure \@ref(fig:ddm-pic). The drift rate parameter $\nu$ (nu) reflects how efficiently evidence is accumulated over time. The boundary separation parameter $\alpha$ (alpha) captures the amount of evidence a participant requires before committing to a response — that is, their level of response caution. The starting point parameter $\beta$ reflects where the evidence accumulation process begins relative to the two boundaries — values closer to 0 indicate a bias toward the error bound, whereas values closer to $\alpha$
+indicate a bias toward the correct bound. When $\beta = \frac{\alpha}{2}$, the accumulation starts at the midpoint between the two boundaries, this reflects no a priori bias. Finally, the non-decision time parameter $\tau$ (tau) accounts for the time a participant needs to encode and process the stimuli that are presented and includes, for example, perceptual encoding and motor execution.^[The remaining three parameters capture across-trial variability. The variability in drift rate $\eta$
+(eta) reflects trial-to-trial fluctuations in the rate of evidence accumulation, accounting for the fact that even identical stimuli are not processed with identical efficiency on every trial. The variability in starting point $s_z$ captures trial-to-trial fluctuations in the initial bias of the accumulation process. Finally, the variability in non-decision time $s_t$ reflects trial-to-trial variability in the duration of encoding and motor processes.]
+
+The DDM parameters capture aspects of decision making but these aspects can be manipulated by the design of an experiment. For example, the drift rate ($\nu$) is affected by individual differences in how fast and efficient one can process the presented information.
+
+
+```{r ddm-pic, echo=FALSE, warning=FALSE,fig.cap="Evidence accumulation in a decision task with two choices. The black line represents this (noisy) process of evidence accumulation over time until the person responded (observed RT), i.e., when the evidence hits the decision bound. The distributions represent the predicted reaction times for correct decisions (green; top) and errors (pink; bottom) .", fig.pos="H", fig.width=6}
+
+library(ggplot2)
+
+alpha <- 1
+tau   <- 0.25
+
+t_knots <- c(0, 0.35, 0.42, 0.75, 1.15, 1.55, 1.75, 2.40, 2.85, 3.30, 3.75, 4.20)
+y_knots <- c(tau,  0.12, 0.25, 0.32, 0.18, 0.55, 0.35, 0.62, 0.58, 0.88, 0.70, alpha)
+
+
+y_knots_scaled <- tau + (y_knots - tau) * 0.62  
+y_knots_scaled[length(y_knots_scaled)] <- alpha   
+
+path_interp <- spline(t_knots, y_knots_scaled, n = 50, method = "natural")
+time_path   <- path_interp$x
+
+set.seed(7)
+n <- length(time_path)
+
+
+slow_walk    <- cumsum(rnorm(n, 0, 0.040)) * 0.20
+medium_bumps <- cumsum(rnorm(n, 0, 0.07))  * 0.14
+spikes       <- rnorm(n, 0, 0.09)
+
+spike_locs <- sample(seq(5, n - 5), size = 6)
+spike_dir  <- sample(c(-1, 1), size = 6, replace = TRUE)
+spikes[spike_locs] <- spikes[spike_locs] + spike_dir * runif(6, 0.14, 0.22)
+
+jitter <- slow_walk + medium_bumps + spikes
+jitter <- jitter - mean(jitter)
+
+ev_path <- path_interp$y + jitter
+
+
+ev_path <- ev_path - ev_path[1] + tau
+
+
+hard_cap <- alpha * 0.72         
+ev_path[1:(n-1)] <- pmin(ev_path[1:(n-1)], hard_cap)
+
+
+min_val <- 0.04
+too_low <- ev_path < min_val
+ev_path[too_low] <- min_val + abs(ev_path[too_low] - min_val) * 0.3
+
+
+blend_start <- round(n * 0.88)
+for (i in blend_start:n) {
+  w <- ((i - blend_start) / (n - blend_start))^2
+  ev_path[i] <- (1 - w) * ev_path[i] + w * alpha
+}
+
+
+ev_path[1] <- tau
+ev_path[n] <- alpha
+
+rt <- max(time_path)
+df_path <- data.frame(time = time_path, evidence = ev_path)
+
+tau_x1 <- -0.38
+tau_x2 <-  0.00
+beta_x <- -0.07
+
+x_max <- 5.8
+x_min <- tau_x1
+x     <- seq(x_min, x_max, length.out = 1500)
+
+x_shift    <- pmax(x - 0.0, 0)
+top_raw    <- dgamma(x_shift, shape = 5.0, scale = 0.42)
+bottom_raw <- dgamma(x_shift, shape = 5.0, scale = 0.42)
+
+top_raw    <- top_raw    / max(top_raw)
+bottom_raw <- bottom_raw / max(bottom_raw)
+
+top_raw[x    < 0] <- 0
+bottom_raw[x < 0] <- 0
+
+taper <- ifelse(x < rt - 0.3, 1, exp(-((x - (rt - 0.3))^2) / (2 * 0.15^2)))
+taper[x >= rt] <- 0
+
+top_raw    <- top_raw    * taper
+bottom_raw <- bottom_raw * taper
+
+top_raw[top_raw       < 0.002] <- 0
+bottom_raw[bottom_raw < 0.002] <- 0
+
+top_y    <-  alpha + top_raw    * 0.44
+bottom_y <- -bottom_raw         * 0.22
+
+df_dens <- data.frame(x = x, top_y = top_y, bottom_y = bottom_y)
+
+arr_x1 <- 1.6;  arr_y1 <- 0.08
+arr_x2 <- 2.3;  arr_y2 <- 0.32
+offset <- 0.10
+
+ggplot() +
+
+  geom_ribbon(data = df_dens,
+    aes(x = x, ymin = alpha, ymax = top_y),
+    fill = "darkgreen", colour = "black", linewidth = 0.4) +
+
+  geom_ribbon(data = df_dens,
+    aes(x = x, ymin = bottom_y, ymax = 0),
+    fill = "#E75480", colour = "black", linewidth = 0.4) +
+
+  geom_segment(aes(x = tau_x1 - 0.05, xend = x_max, y = alpha, yend = alpha),
+               colour = "grey30", linewidth = 1.2) +
+  geom_segment(aes(x = tau_x1 - 0.05, xend = x_max, y = 0, yend = 0),
+               colour = "grey30", linewidth = 1.2) +
+  geom_segment(aes(x = 0, xend = 0, y = -0.05, yend = alpha + 0.05),
+               colour = "grey30", linewidth = 1.2) +
+
+  geom_segment(aes(x = tau_x1, xend = tau_x2, y = tau, yend = tau),
+               colour = "red", linewidth = 1.3) +
+  geom_segment(aes(x = tau_x1, xend = tau_x1, y = tau - 0.04, yend = tau + 0.04),
+               colour = "red", linewidth = 1.0) +
+
+  geom_segment(aes(x = beta_x, xend = beta_x, y = 0.01, yend = tau - 0.01),
+               colour = "red", linewidth = 1.3,
+               arrow = arrow(ends = "both", length = unit(0.10, "inches"),
+                             type = "closed")) +
+
+  geom_line(data = df_path, aes(x = time, y = evidence),
+            colour = "black", linewidth = 1.2) +
+
+  geom_segment(aes(x = rt, xend = rt, y = alpha, yend = alpha + 0.06),
+               colour = "red", linewidth = 1.2) +
+
+  geom_segment(aes(x = arr_x1, xend = arr_x2, y = arr_y1, yend = arr_y2),
+               colour = "red", linewidth = 1.4,
+               arrow = arrow(length = unit(0.12, "inches"), type = "closed")) +
+
+  annotate("text", x = tau_x1 - 0.10, y = alpha,
+           label = expression(alpha), colour = "red",
+           size = 6, hjust = 1, vjust = 0.5) +
+
+  annotate("text", x = (tau_x1 + tau_x2) / 2, y = tau + 0.10,
+           label = expression(tau), colour = "red",
+           size = 6, hjust = 0.5) +
+
+  annotate("text", x = (arr_x1 + arr_x2) / 2 - 0.10,
+           y = (arr_y1 + arr_y2) / 2 - 0.10,
+           label = expression(nu), colour = "red", size = 6) +
+
+  annotate("text", x = beta_x - 0.11, y = tau / 2,
+           label = expression(beta), colour = "red",
+           size = 6, hjust = 1, vjust = 0.5) +
+
+  annotate("text", x = rt + 0.12, y = alpha + 0.11,
+           label = "observed RT", colour = "red",
+           size = 5.5, hjust = 0.0) +
+
+  annotate("text", x = x_max - 0.1, y = alpha - offset,
+           label = "correct bound", colour = "grey30",
+           size = 5.5, hjust = 1) +
+
+  annotate("text", x = x_max - 0.1, y = 0 + offset,
+           label = "error bound", colour = "grey30",
+           size = 5.5, hjust = 1) +
+
+  annotate("text", x = tau_x1 - 0.22, y = 0.52,
+           label = "evidence", colour = "grey30",
+           angle = 90, size = 5.5) +
+
+  annotate("text", x = -0.02, y = 0.00,
+           label = "0", size = 5.5, hjust = 1, vjust = 1) +
+
+  coord_cartesian(
+    xlim = c(tau_x1 - 0.05, x_max),
+    ylim = c(-0.42, 1.36),
+    clip = "off"
+  ) +
+
+  theme_void() +
+  theme(plot.background = element_rect(fill = "white", colour = NA))
+```
+
+## problem: computational intensity, solution: EZ
+
+The drift diffusion model (DDM) gives an explanation for the mechanisms of a decision making process and is able to handle the speed–accuracy trade-off [@zhang_dissociable_2014]. 
+However, its implementation is computationally complex and fitting the model can be technically difficult [@boehm2018estimating].
+
+In response, @wagenmakers2007ez developed a fast, but stable and easy version of the DDM, the "EZ diffusion model" (EZ DDM), which estimates three key parameters from the DDM (non-decision time, drift rate, and boundary separation), assuming no a priori bias toward either response option (i.e., $\beta = \frac{\alpha}{2}$), from **three summary statistics**: The mean ($MRT$) and variance ($VRT$) of the correct RTs and the accuracy ($Percentage$ $correct$ $(Pc)$). The three observed summary statistics are converted into the parameters using **closed-form equations**. Hence, the model is not fit directly on the trial-level data.
+
+The EZ works with low trial counts and low error rates: It performs relatively well in situations with limited data. Traditional diffusion model fitting requires a sufficient number of both correct and error trials to reliably estimate parameters, especially the shape of RT distributions. However, in many experimental paradigms — particularly those with high accuracy — error trials are scarce [@wagenmakers2007ez, @vanravenzwaaij2017ez]. The EZ-DDM solves this limitation by relying only on the three summary statistics (mean RT, RT variance, and accuracy), making it suitable for small sample designs and high-accuracy tasks (e.g., easy perceptual decision tasks). The parameter estimates of the EZ remain reasonably stable even when error rates are very low, where full diffusion model fits can become unreliable or fail to converge.
+
+The EZ also requires no error RT distribution. DDM fitting procedures depend on the full distribution of response times for both correct and incorrect responses. This is often problematic because error RTs are often noisy, error trials are often too few to estimate distributions reliably, and preprocessing can disproportionately affect error trials. By not modelling RT distributions directly, the EZ DDM eliminates this dependency. It derives parameter estimates from aggregated measures, reducing sensitivity to outliers in the RT data and instability caused by too few error observations. It is also accessible to a broader audience: The EZ DDM lowers the barrier to entry for researchers that are unfamiliar with diffusion modelling, and is very fast compared to the full DDM. It therefore has been has been widely adopted [@wagenmakers2007ez, @chavez2025ez].
+
+However, the EZ DDM assumes no across-trial variability in parameters and is less flexible than the full DDM [@ratcliff2008ez], and when the model's assumptions are violated (variability in drift rate, starting point, or non-decision time), recovered parameter values tend to underestimate their true values. Additionally, the EZ cannot accommodate trial-to-trial variability in drift rates, starting points, or non-decision times, which are features the full diffusion model handles [@ratcliff2008diffusion]. 
+Despite these limitations, the EZ remains a practical and computationally efficient tool for estimating decision-making parameters, which makes it a widely used starting point in applied research.
+
+
+## Problem: Individual differences, solution: hierarchical EZ 
+
+While the EZ provides a practical and accessible tool for parameter estimation, applying it independently to each participant ignores the structure that individual differences impose. A hierarchical framework addresses this limitation by modelling participants jointly, which enables inference at the individual and group level simultaneously.
+
+Hierarchical Bayesian models extend standard cognitive models by adding a second level that explains how the underlying psychological parameters are generated and vary across individuals [@lee_how_2011-4; @vandekerckhove_hierarchical_2011-2]. Rather than treating parameters as fixed quantities estimated separately per participant, they are modelled as samples drawn from a population-level distribution, enabling simultaneous inference about individual- and group-level properties [@lee_how_2011-4]. This is particularly useful when data per participant are sparse, which often leads to non-hierarchical models failing to produce reliable estimates. Hierarchical models pool information across individuals and recover parameter estimates that would otherwise be not recoverable [@vandekerckhove_hierarchical_2011-2].
+
+Because the parameters retain their psychological meaning, inference remains grounded in cognitive processes while simultaneously capturing how those processes vary between people. This has been described as a form of "cognitive psychometrics": a unified framework that explains both the mechanisms underlying behaviour and the individual differences in those mechanisms [@vandekerckhove_hierarchical_2011-2]. Variability is not treated as noise, but as a theoretically meaningful quantity that needs to be modelled and explained. For instance, drift rate can be expressed as a function of predictors such as age, stimulus properties, or experimental condition, allowing the model to explain and not only describe the differences between participants [@vandekerckhove_hierarchical_2011-2].
+
+A hierarchical structure also supports parameters to be vary selectively, e.g., some fixed across participants, others free, which avoids overly complex models with too many free parameters [@vandekerckhove_hierarchical_2011-2].Furthermore, hierarchical models allow different cognitive processes to contribute to the same dataset, which means the core model can remain simple while one can still account for additional variability through separate processes, leading to more accurate and theoretically meaningful explanations [@lee_how_2011-4]. 
+
+The hierarchical extension of the EZ diffusion model has been implemented by @chavez2025ez and offers a principled and psychologically interpretable way to handle individual differences, producing more stable estimates and deeper theoretical conclusions than fitting the model independently to each participant [@chavez2025ez; @lee_how_2011-4; @vandekerckhove_hierarchical_2011-2]. 
+
+The goal of this paper is to ensure that researchers can use this model for their own research. For this purpose, we introduce its implementation in R-Stan and JAGS, show how to apply it and give a practical example.
+
+## Problem: how to apply, solution: code and examples
+
+In the following, we will formally introduce the (hierarchical) EZ DDM, show how it can be implemented and present an application.
+
+
+# Modelling the EZ diffusion model
+
+Enabling the estimation of the cognitive parameters at the individual level, while also modelling population-level variability, @chavez2025ez have shown how to embed the EZ into a hierarchical framework. 
+
+Following @chavez2025ez, $\mathbf{Y}_{ij}$ denotes the vector of the choice and response time of the $i$th person on the $j$th trial. $\mathbf{Y}_{ij}$ is modeled using a Wiener distribution,
+
+$$\mathbf{Y}_{ij} \sim \mbox{Wiener} \ (\alpha_i,\ \beta_i,\ \tau_i,\ \nu_i)$$
+
+where the parameters are a (participant-specific) drift rate $\nu_i$, a boundary separation $\alpha_i$, and a non-decision time $\tau_i$. The fourth parameter of the Wiener distribution, the bias parameter $\beta_i$, is fixed at $\frac{\alpha_i}{2}$, (i.e., no response bias; see @wagenmakers2007ez).
+
+
+The mean parameter of the RTs of correct responses $M_{ci}$ and the variance parameter of the RTs of correct responses $\Sigma_{ci}$ can be *computed from the three key DDM parameters* $\nu_{i}$, $\alpha_{i}$, $\tau_{i}$.
+
+Let $u_i = \exp(-\alpha_i \nu_i)$. Then, the mean and variance of the correct response times are:
+$$
+M_{ci} = \tau_i + \big( \frac{\alpha_i}{2\nu_i} \big) \big( \frac{u_i - 1}{u_i + 1} \big) 
+$$
+
+and 
+
+$$
+\Sigma_{ci} = \big( \frac{\alpha_i}{2{\nu_i}^3} \big) \Bigg( \frac{1 - 2 \alpha_i \nu_i u_i - {u_i}^2}{(u_i + 1)^2} \Bigg).
+$$
+
+
+The summary statistics (mean ($MRT$) and variance ($VRT$) of the correct RTs, and the accuracy ($Percentage$ $correct$ $(Pc)$)) are converted into the parameters using *closed-form equations*.
+These observed summary statistics that serve as the "data" consist of each person $i$'s number of correct trials ($C_i$), as well as the mean and variance of the correct RTs ($MRT_i$ and $VRT_i$). 
+
+For $J$ observations, the sampling distribution of the number of correct trials $C_i$ is:
+$$
+C_i \sim \text{Binomial} \ \big(\pi_{ci},\ J \big)
+$$
+Here, the probability of a correct response is 
+$$\pi_{ci} = \frac{1}{\exp(-\alpha_i \nu_i) + 1}$$. 
+
+Similarly, for $J$ observations, the sampling distribution of the mean correct RT, $MRT_i$, is approximated by a normal distribution:
+$$
+MRT_i \sim \text{Normal} \ \Bigg(M_{ci},\ \frac{\Sigma_{ci}}{C_i} \Bigg)
+$$
+
+When $C_i$ is sufficiently large ($>30$), the sampling distribution of the variance of the correct RTs, $VRT_i$, is also approximated by a normal distribution:
+$$
+VRT_i \sim \text{Normal} \ \Bigg( \Sigma_{ci},\ 2 \frac{{\Sigma_{ci}} ^2}{C_i-1} \Bigg)
+$$
+
+
+# Implementation
+
+The hierarchical EZ model described above captures individual differences in cognitive parameters through population-level distributions, but does not yet account for systematic variation due to experimental conditions or participant-level covariates. We extended the model to incorporate both sources of variation by using design matrices. 
+
+The key idea is to model the parameter of each individual-level distribution as a linear combination of predictors. By this we can include experimental conditions, continuous participant-level covariates, or both in the model in a flexible way. Also, different parameters can be associated with different sets of predictors, reflecting theoretical assumptions about which factors are expected to drive which cognitive processes.
+
+## model without experimental conditions
+
+As we aim to define a hierarchical model, we assume that the individual parameters $\nu_i$, $\alpha_i$ and $\tau_i$ are sampled from truncated normal distributions. Boundary separation and non-decision time are modelled with a population mean $\mu$ and population variance $\sigma$:
+
+$$\tau_i  \sim \mathcal{N}_{(0.05,\,\infty)}\!\big(\mu_\tau,\ \sigma_\tau^2\big)$$
+
+$$\alpha_i \sim \mathcal{N}_{(0.1,\,3.0)}\!\big(\mu_\alpha,\ \sigma_\alpha^2\big)$$
+
+Drift rate is additionally modelled as a function of a continuous participant-level covariate $x_i$, with $\beta_1^{(\nu)}$ capturing its effect:
+
+$$\nu_i \sim \mathcal{N}_{(-3,\,3)}\!\big(\mu_\nu + x_i\beta_1^{(\nu)},\ \sigma_\nu^2\big)$$
+
+We used truncated normal distributions here to maintain reasonable boundaries for each set of parameters (e.g., no negative values for non-decision time and boundary separation). We will refer back to these boundaries subsequently when we discuss the implementations of the EZ model.
+
+
+## with experimental conditions 
+
+Suppose we have a design with $K = 2$, indexed by $k = 1, \ldots, K$ experimental conditions — for example, an easy and a hard condition — and a single continuous participant-level covariate $x_i$. The drift rate $\nu$ is modelled as a function of both the experimental condition and the participant-level covariate ($x_i$), reflecting the expectation that processing efficiency varies both across conditions and across individuals. Non-decision time $\tau$ is modelled as a function of the experimental condition only, as sensori-motor processing speed is not expected to systematically covary with $x_i$.
+
+Boundary separation $\alpha$ is also modelled as a function of the experimental condition, but the size of the condition effect is allowed to vary across participants through a by-participant random slope $v_i$, where $v_i \sim \mathcal{N}(0,\ \sigma_v^2)$. This captures individual differences in how much participants adjust their response caution between the easy and the hard condition. Some participants may substantially raise their threshold in the harder condition, whereas others barely change their caution. The average condition effect on boundary separation is $\beta^{(\alpha)}$, and $v_i$ reflects each participant's deviation from that average.
+
+The parameters of the three truncated normal distributions are each modelled as a linear combination of predictors via a parameter-specific design matrix $\mathbf{X}_{ik}^{(\theta)}$, where $\theta \in \{\nu, \alpha, \tau\}$.
+
+This means, for the drift rate we describe 
+$$\nu_{ik} \sim \mathcal{N}_{(-3,\,3)}\!\big(\mathbf{X}_{ik}^{(\nu)}, \boldsymbol{\beta}_{\nu},\ \sigma_\nu^2\big)$$
+The matrices then look like this:
+$$
+\mathbf{X}_{ik}^{(\theta)} = 
+\begin{vmatrix}
+1 & x_{11} & x_{112}\\
+1 & . & . \\
+1 & . & . \\
+1 & . & . \\
+1 &  x_{I1} & x_{IK2}
+\end{vmatrix}$$
+
+and
+
+$$
+\boldsymbol{\beta} =
+\begin{vmatrix}
+\mu^{(\nu)} \\
+\beta^{(\nu)}_1 \\
+\beta^{(\nu)}_2
+\end{vmatrix}
+$$
+The matrix of $\mathbf{X}_{ik}^{(\theta)}$ consists of a first column that refers to the intercept (all 1s), a second column that refers to the continuous predictor (participant-level covariate), called $x_{i1}$ for every participant $i, ..., I$, and a third column that refers to the categorical predictor (in this case: experimental conditions), called $x_{ik2}$ for every participant $i, ..., I$ and condition $k$ (in this case this can be $1$ or $2$). 
+
+The matrix of $\boldsymbol{\beta}$ consists of the mean of the parameter ($\mu^{(\nu)}$), $\beta^{(\nu)}_2$ (the average shift in drift rate from condition 1 to condition 2), multiplied with the condition dummy variable $x_{ik2}$ (here it is $0$ when $k=1$ and $1$ when $k=2$), and $\beta^{(\nu)}_1$ (the covariate effect on drift rate), multiplied with the continuous participant-level covariate $x_{i1}$
+
+
+To simplify, consider the drift rate for one participant $i$. Then the drift rate can be expressed as a univariate regression formula:
+$$\mu_{ik}^{(\nu)} = \mu^{(\nu)} + x_{i1}\beta_1^{(\nu)} + x_{ik2}\beta_2^{(\nu)}$$
+
+where $\mu_\nu$ is the population mean drift rate in condition 1, with $\beta_1^{(\nu)}$ being the effect of the participant-level covariate $x_{i1}$ (continuous predictor). $\beta_2^{(\nu)}$ is the average shift in drift rate from condition 1 to condition 2. The term $x_{ik2}$ serves as a dummy variable, that takes the value of 0 when $k=1$ (condition 1) and 1 when $k=2$ (condition 2) and is therefore a categorical predictor (experimental conditions). 
+
+Similarly, the boundary separation parameter and the non-decision time parameter are described as
+$$\alpha_{ik} \sim \mathcal{N}_{(0.1,\,3.0)}\!\big(\mathbf{X}_{ik}^{(\alpha)}\,\boldsymbol{\beta}_{\alpha},\ \sigma_\alpha^2\big)$$
+and
+$$\tau_{ik} \sim \mathcal{N}_{(0.05,\,\infty)}\!\big(\mathbf{X}_{ik}^{(\tau)}\,\boldsymbol{\beta}_{\tau},\ \sigma_\tau^2\big)$$
+The variance parameters $\sigma_\nu^2$, $\sigma_\alpha^2$, and $\sigma_\tau^2$ capture residual between-person variability after accounting for the predictors.
+
+The univariate regression formula for boundary separation is
+$$\mu_{ik}^{(\alpha)} = \mu^{(\alpha)} + x_{ik2}\!\left(\beta^{(\alpha)} + v_i\right)$$
+where $v_i$ is defined as 
+$$v_i \sim \mathcal{N}(0,\ \sigma_v^2)$$
+This is a by-participant random slope on the condition dummy $x_{ik2}$. The average condition effect on boundary separation is $\beta^{(\alpha)}$, and $v_i$ captures each participant's deviation from that average, reflecting individual differences in how much response caution changes between the easy and the hard condition.
+
+
+Finally, the univariate regression for non-decision time is
+$$\mu_{ik}^{(\tau)} = \mu^{(\tau)} + x_{ik2}\beta^{(\tau)}$$
+Here, the participant-level covariate and the random slope are omitted.
+
+
+
+## Implementation in Stan
+
+We implemented a version of the model by @chavez2025ez but relaxed some of the parameter constraints.
+
+We first included a `data` block, declaring the data to be used as inputs to the model. In this case, this input includes the number of persons `I`, the number of trials per person `J[I]`, the observed number of correct trials per person `C[I]`, the observed mean response time for correct responses `MRT[I]`, the variance or response times for correct responses `VRT[I]`, and the predictor (`x[I]`). 
+
+```{stan output.var="model", echo = TRUE, cache = T}
+data {
+  int<lower=1> I;               
+  int<lower=1> J[I];            
+  int<lower=0> C[I];            
+  vector[I] MRT;                
+  vector[I] VRT;                
+  vector[I] x;                  
+}
+```
+
+
+We then modified the `parameters` block by only keeping the lower bounds for `mu_alpha` and abolishing all bounds for `mu_nu`. The group level mean for $\alpha$ originally had an upper bound at $3.0$ and the group level mean for $\nu$ was bounded between $-3$ and $3$. 
+
+Then, we extended the upper bound of the group level standard deviation of $\alpha$ from $0.4$ to $0.8$ and the upper bound of `sigma_tau` from $0.25$ to $0.6$. For `sigma_nu`, we set the lower bound to $0$ and deleted any constraints for an upper bound. As for the individual level parameters, we also changed the parameter space of `nu` to not be constraint at all, from previously $-3$ to $3$. 
+We also included the regression coefficient `beta_nu_1`, which we bounded between $0$ and $1$.
+
+We made these changes to let the parameters vary more freely, so that we could confirm that the model was still yielding sensible results when the parameter were less constraint. 
+
+```{stan output.var="model", echo = TRUE, cache = T, eval = F}
+parameters {
+  // group-level means
+  real<lower=0.1> mu_alpha; 
+  real mu_nu; 
+  real<lower=0.05> mu_tau;
+
+  // group-level SDs
+  real<lower=0.1, upper=0.8> sigma_alpha; 
+  real<lower=0>sigma_nu; 
+  real<lower=0.05, upper=0.6> sigma_tau; 
+
+  // regression weight on x
+  real<lower=0, upper=1> beta_nu_1;
+
+  // individual-level parameters
+  vector<lower=0.1, upper=3.0>[I] alpha;
+  vector [I] nu; 
+  vector<lower=0.05>[I] tau;
+}
+```
+
+The `model` block included the prior distributions for the group level means and group level variances, as well as the distributions of the the hierarchical individual-level parameters and the likelihood. Here, we focus on the likelihood and the computation of the predicted probability of a correct response $\pi_{i}$, the predicted mean RT $\mu_{RT, i}$ and the predicted RT variance $\Sigma_{RT, i}$. We discuss the full model — including priors — at a later stage (see 'Application'), when we show how the model can be applied.
+
+The likelihood was based on the equations of the EZ-diffusion model, which describe how the observed behavioral data (accuracy, mean RT, and RT variance) relate to the underlying decision parameters. Specifically, for each participant $i$, the predicted probability of a correct response $\pi_{i}$, the predicted mean RT $\mu_{RT, i}$ and the predicted RT variance $\Sigma_{RT, i}$ were computed as transformations of the latent parameters $\alpha_{i}$, $\nu_{i}$ and $\tau_{i}$.
+
+These predictions were then plugged into the likelihood functions: The number of correct responses `C[i]` was modeled as a binomial draw from `J[i]` trials with success probability $\pi{i}$. The mean RT for correct responses `MRT[i]` was modeled as a normal distribution centered on $\mu_{RT, i}$, with a standard deviation that reflects the expected variability of the sample mean given the number of correct responses `C[i]`. Similarly, the observed RT variance `VRT[i]` was modeled as a normal distribution over the predicted variance $\Sigma_{RT, i}$, with a standard deviation that reflects the expected variability of a variance estimate based on the number of correct responses `C[i]`. Therefore, the model utilized the summary statistics directly, while still taking into account uncertainty.
+
+```{stan output.var="model", echo = TRUE, cache = T, eval = F}
+model {
+
+  // likelihood
+  for (i in 1:I) {
+    real u = exp(-alpha[i] * nu[i]);
+    real pi = 1 / (1 + u); // predicted accuracy
+    real mu_rt = tau[i] + (alpha[i] / (2 * nu[i])) * ((1 - u) / (1 + u));
+    real sigma2_rt = (alpha[i] / (2 * pow(nu[i], 3))) * ((1 - 2 * alpha[i] *
+         nu[i] * u - u^2) / square(1 + u));
+
+    C[i] ~ binomial(J[i], pi);
+    MRT[i] ~ normal(mu_rt, sqrt(sigma2_rt / C[i]));
+    VRT[i] ~ normal(sigma2_rt, sqrt(2 * square(sigma2_rt) / (C[i] - 1)));
+  }
+}
+```
+
+
+
+
+### Adding conditions to the model
+
+In many experimental paradigms, participants perform the same task under multiple experimental conditions (e.g., control vs. manipulation). We already described how the hierarchical Bayesian EZ DDM may formally look like if we are interested in how drift rate, boundary separation, and non-decision time behave across conditions. To address this, we extended the hierarchical Bayesian EZ-DDM to estimate parameters for within-subject conditions describing a version of the model with K conditions, indexed by $k = 1, \ldots, K$, where each participant $i$ has a separate set of latent parameters ($\alpha_{i, k}$, $\nu_{i, k}$ and $\tau_{i, k}$) for each condition k. 
+
+The `data` block extended the model without conditions to a model with $K$ (number of conditions) and defines the number of columns in each parameter-specific design matrix. In our example described above, `P_nu` has in total $3$ columns: intercept, covariate, and condition dummy. `P_alpha` and `P_tau` each have an intercept and condition dummy, which means they each have in total 2 columns. The design matrices `X_nu`, `X_alpha`, and `X_tau` are passed on as data, with one row vector per participant–condition cell. Importantly, the participant-level covariate $x_i$ is not passed to Stan as a separate variable; instead it is embedded into the second column of `X_nu` when the design matrix is constructed in R before fitting. This means Stan only receives the pre-computed design matrices and never needs to know the structure of the predictors directly. Using matrices like this the model does not define any particular predictor structure. The matrices can be constructed in R before fitting depending on the design structure of the experiment. This makes the model reusable for different experimental designs.
+
+```{stan output.var="model_cond", cache = T, echo = TRUE}
+data {
+  int<lower=1> I;
+  int<lower=1> K;
+  int<lower=1> P_nu;              // columns in X_nu (here: intercept, covariate, condition)
+  int<lower=1> P_alpha;           // columns in X_alpha (here: intercept, condition)
+  int<lower=1> P_tau;             // columns in X_tau (here: intercept, condition)
+  array[I, K] int<lower=1> J;
+  array[I, K] int<lower=0> C;
+  matrix[I, K] MRT;
+  matrix[I, K] VRT;
+  array[I, K] row_vector[P_nu]    X_nu;
+  array[I, K] row_vector[P_alpha] X_alpha;
+  array[I, K] row_vector[P_tau]   X_tau;
+}
+```
+
+In the `parameters` block, we replaced the separately named group-level means from the model without conditions with regression coefficients. Each coefficient vector $\beta_\theta$ puts the intercept and all predictors for parameter $\theta$ into one object. This is matching the structure of the design matrices, which we declared in the data block. Specifically, `beta_nu` contains the population mean drift rate `mu_nu`, the covariate effect `beta_nu_1`, and the condition effect `beta_nu_2` in the `vector[P_nu]`. `beta_alpha` contains only the intercept and the average condition effect (`mu_alpha` and `beta_alpha_2`) in `vector[P_alpha]`. This is similar for `beta_tau`, which also only contains the intercept and the condition effect (`mu_tau` and `beta_tau_2`) in `vector[P_tau]`.
+For the group-level standard deviations (`sigma_nu`, `sigma_alpha`, and `sigma_tau`), we kept the same bounds as in the without-conditions model. The individual-level parameters `alpha`, `nu`, and `tau` were changed from vectors to $I \times K$ matrices, this gives each participant a separate estimate per condition.
+
+In addition, we included a vector of by-participant random slopes `v` of length $I$ for the condition effect on boundary separation. Each element $v_i$ captures how much participant $i$ deviates from the average condition effect $\beta^{(\alpha)}$ when shifting from the easy to the hard condition. The random slopes are assumed to be normally distributed with mean zero and standard deviation `sigma_v`, which is itself a free parameter with a lower bound at zero. A larger `sigma_v` indicates greater individual variability in condition-driven changes in response caution; a value near zero would indicate that all participants adjust their boundary separation by roughly the same amount.
+
+```{stan output.var="model_cond", cache = T, eval = F, echo = TRUE}
+parameters {
+
+  // regression coefficients: [intercept, predictors] per parameter
+  vector[P_nu]    beta_nu;      // [mu_nu, beta_nu_1, beta_nu_2]
+  vector[P_alpha] beta_alpha;   // [mu_alpha, beta_alpha_2]
+  vector[P_tau]   beta_tau;     // [mu_tau, beta_tau_2]
+
+  // group-level SDs
+  real<lower=0.1, upper=0.8>  sigma_alpha;
+  real<lower=0>               sigma_nu;
+  real<lower=0.05, upper=0.6> sigma_tau;
+
+  // by-participant random slopes for condition effect on alpha
+  vector[I]     v;              // participant deviations from beta_alpha_2
+  real<lower=0> sigma_v;        // SD of random slopes
+
+  // individual-level parameters (I x K)
+  matrix<lower=0.1, upper=3.0>[I, K] alpha;
+  matrix[I, K]                       nu;
+  matrix<lower=0.05>[I, K]           tau;
+}
+```
+
+The `model` block iterates over all participant–condition cells. For each cell $(i, k)$, the predicted mean of each parameter's hierarchical distribution is obtained by multiplying the corresponding design-matrix row by the coefficient vector. This implements the structure of $\mu_{ik}^{(\theta)} = \big(\mathbf{X}_{ik}^{(\theta)}\,\boldsymbol{\beta}_{\theta}\big)$.
+For the drift rate, `X_nu[i, k] * beta_nu` computes $\mu^{(\nu)} + x_{i1}\beta_1^{(\nu)} + x_{ik2}\beta_2^{(\nu)}$. For boundary separation, the predicted mean is $\mu^{(\alpha)} + x_{ik2}(\beta^{(\alpha)} + v_i)$: the fixed part `X_alpha[i, k] * beta_alpha` is augmented by `v[i] * X_alpha[i, k][2]`, where `X_alpha[i, k][2]` is the condition dummy $x_{ik2}$ and `v[i]` is the participant-specific deviation from the average condition effect. For non-decision time, `X_tau[i, k] * beta_tau` computes $\mu^{(\tau)} + x_{ik2}\beta^{(\tau)}$. The random slopes `v` are drawn from a normal distribution with mean zero and standard deviation `sigma_v`. The individual-level parameters `nu[i, k]`, `alpha[i, k]` and `tau[i, k]` are drawn from normal distributions centred on these predicted means, with the group-level standard deviations capturing the residual between-person variability within each condition. The likelihood is identical in structure to the without-conditions model. Again, the priors over the coefficient vectors and standard deviations are discussed in the 'Application' section.
+
+```{stan output.var="model_cond", cache = T, eval = F, echo = TRUE}
+model {
+  // prior on random-slope SD
+  sigma_v ~ normal(0, 0.5);
+  v       ~ normal(0, sigma_v);
+
+  for (i in 1:I) {
+    for (k in 1:K) {
+      // design-matrix-predicted means
+      real mean_nu_ik    = X_nu[i, k]    * beta_nu;
+      // fixed condition effect + participant-specific deviation
+      real mean_alpha_ik = X_alpha[i, k] * beta_alpha + v[i] * X_alpha[i, k][2];
+      real mean_tau_ik   = X_tau[i, k]   * beta_tau;
+
+      // hierarchical distributions
+      nu[i, k]    ~ normal(mean_nu_ik,    sigma_nu);
+      alpha[i, k] ~ normal(mean_alpha_ik, sigma_alpha);
+      tau[i, k]   ~ normal(mean_tau_ik,   sigma_tau);
+
+      // EZ likelihood
+      real u         = exp(-alpha[i, k] * nu[i, k]);
+      real pi_c      = 1.0 / (1.0 + u);
+      real mu_rt     = tau[i, k] + (alpha[i, k] / (2.0 * nu[i, k])) *
+                       ((1.0 - u) / (1.0 + u));
+      real sigma2_rt = (alpha[i, k] / (2.0 * pow(nu[i, k], 3))) *
+                       ((1.0 - 2.0 * alpha[i, k] * nu[i, k] * u - u^2) /
+                        square(1.0 + u));
+
+      C[i, k]   ~ binomial(J[i, k], pi_c);
+      MRT[i, k] ~ normal(mu_rt,     sqrt(sigma2_rt / C[i, k]));
+      VRT[i, k] ~ normal(sigma2_rt, sqrt(2.0 * square(sigma2_rt) / (C[i, k] - 1)));
+    }
+  }
+}
+```
+
+
+\newpage
+## Implementation in JAGS
+
+\newpage
+# Simulation Study of Parameter Recovery
+
+The goal of this section is to showcase how to apply the hierarchical Bayesian EZ DDM. We first specify and justify the prior distributions for both the model without and the model with experimental conditions we implemented in the last section. Then, we evaluate whether the models are able to recover known parameter values through a parameter recovery study, where data are simulated from known parameters and the model is fitted to check whether the estimates return to the true values. Finally, we provide show how the model can be applied to empirical data.
+
+To evaluate whether the model can reliably recover the parameters it is applied to, we conducted a parameter recovery study. The data are simulated from known true parameter values, the model is then fitted to the simulated data, and the resulting posterior estimates are compared to the true values. Good recovery means that the posterior means are close to the true values and provides evidence that the model is identified and that the priors and likelihood provide sufficient information to estimate the parameters from data.
+
+## Prior specification
+
+Priors in Bayesian models encode beliefs about plausible parameter values before observing data. We use weakly informative priors [@gelman2017prior], that means these are priors that rule out implausible values and constrain the parameter space to a reasonable range, but remain broad enough not to dominate the likelihood when data are informative. The prior choices are based on typical parameter ranges reported in the literature [@wagenmakers2007ez; @ratcliff2015modeling; @chavez2025ez].
+
+### Model without conditions
+
+The mean drift rate $\mu^{(\nu)}$ is given a normal prior that is centered at zero with a standard deviation of $0.5$:
+
+$$\mu^{(\nu)} \sim \mathcal{N}(0.0,\ 0.5^2)$$
+
+This prior is symmetric and allows drift rates to be positive or negative, reflecting no a priori assumption about the direction of evidence accumulation. A standard deviation of $0.5$ is weakly informative, values beyond $\pm 1$ are possible but increasingly unlikely, which is consistent with typical drift rate magnitudes reported in the literature.
+
+The mean boundary separation $\mu^{(\alpha)}$ is given a truncated normal prior that is centered at $1.5$ with a standard deviation of $0.2$, truncated with a lower bound at $0.1$:
+
+$$\mu^{(\alpha)} \sim \mathcal{N}_{(0.1,\,\infty)}(1.5,\ 0.2^2)$$
+
+Centering at $1.5$ reflects a typical boundary separation in response-time experiments [@wagenmakers2007ez]. The lower truncation at $0.1$ enforces the physical constraint that boundary separation must be positive. The relatively tight standard deviation of $0.2$ reflects that boundary separation values in most tasks fall in a range of roughly $0.5$–$3.0$.
+
+The mean of non-decision time $\mu^{(\tau)}$ is given a truncated normal prior which is centered at $0.3$ seconds with a standard deviation of $0.6$, with a lower bound at $0.05$ seconds:
+
+$$\mu^{(\tau)} \sim \mathcal{N}_{(0.05,\,\infty)}(0.3,\ 0.6^2)$$
+
+Non-decision time represents the time needed for perceptual encoding and motor execution, which typically falls between $0.1$ and $0.5$ seconds [@ratcliff2015modeling] and is therefore centered at $0.3$ seconds. The wider standard deviation of $0.6$ reflects great uncertainty, as non-decision time is known as the DDM parameter that is the hardest to guess (*ref*). The lower bound at $0.05$ seconds reflects a minimum plausible duration of sensory and motor processes.
+
+The group-level standard deviations capture between-person variability in each parameter after accounting for predictors. They are each given truncated normal priors:
+
+$$\sigma_\alpha \sim \mathcal{N}_{(0.1,\,0.8)}(0.25,\ 0.1^2), \quad \sigma_\nu \sim \mathcal{N}_{(0,\,\infty)}(0.3,\ 0.1^2), \quad \sigma_\tau \sim \mathcal{N}_{(0.05,\,0.6)}(0.15,\ 0.1^2)$$
+
+Individual boundary separation values $\alpha_{ik}$ are bounded between $0.1$ and $3.0$. The lower bound of $0.1$ enforces again that boundary separation must be positive, as a zero or negative threshold would makethe decision process undefined. The upper bound of $3.0$ reflects that boundary 
+separation values above this threshold are rarely observed in empirical data, very high values would imply extreme response caution, resulting in implausibly slow response times. Individual drift rate values $\nu_{ik}$ are left unconstrained, allowing both positive and negative drift rates. 
+In practice, drift rates in EZ DDM studies typically fall within $[-3, 3]$, and this range is already implicitly enforced through the hierarchical prior structure. Individual non-decision time values $\tau_{ik}$ are bounded below at $0.05$ seconds, reflecting again the minimum time required for perceptual encoding and motor execution. No upper bound is imposed on $\tau_{ik}$, as non-decision times can vary substantially across participants and tasks (although values above approximately $1$ second would be unusual in most experimental paradigms). 
+
+The standard deviation $\sigma_\alpha$ is bounded between $0.1$ and $0.8$. The lower bound ensures a minimum between-person variability, while the upper bound of $0.8$ was chosen because a standard deviation larger than roughly one quarter of the individual parameter range ($3.0 - 0.1 = 2.9$) would place a lot of prior mass on individual estimates near the boundaries, which is implausible. Similarly, $\sigma_\tau$ is bounded between $0.05$ and $0.6$. The lower bound matches the lower truncation of $\tau_{ik}$ , and the upper bound of $0.6$ prevents between-person variability from becoming so large that many individual $\tau_{ik}$ estimates are pushed towards the lower boundary of $0.05$. For drift rate, $\sigma_\nu$ only had a lower bound at $0$, and no upper bound, reflecting that individual variability in processing efficiency is allowed to be large. Nonetheless, the prior mean of $0.3$ with standard deviation $0.1$ concentrates most prior mass on moderate variability, which is consistent with estimates of between-person variability in DDM parameters [@vandekerckhove_hierarchical_2011-2].
+
+
+The covariate effect on drift rate $\beta_1^{(\nu)}$ is given a standard normal prior:
+
+$$\beta_1^{(\nu)} \sim \mathcal{N}(0,\ 1^2)$$
+
+This prior is centered at zero (i.e., no effect by default) but wide enough to accommodate moderate or even large covariate effects on the drift rate.
+
+
+### Model with conditions
+
+For the model with experimental conditions, the priors on the group-level means and the group-level standard deviations remain the same as described above. The added condition effects receive the following priors:
+
+$$\beta_2^{(\nu)} \sim \mathcal{N}(0,\ 1.00^2), \quad \beta^{(\alpha)} \sim \mathcal{N}(0,\ 0.50^2), \quad \beta^{(\tau)} \sim \mathcal{N}(0,\ 0.05^2)$$
+
+All condition effects are centered at zero, which is a default expectation of no condition effect. The prior widths reflect the theoretical expectations about the magnitude of a condition effect on each parameter. The prior on $\beta_2^{(\nu)}$ is broad, as this reflects that drift rate is sensitive to stimulus properties and may shift substantially between conditions. The prior on $\beta^{(\alpha)}$ is half as wide as the one on  $\beta_2^{(\nu)}$, this moderately wide prior reflects that response caution may shift between conditions but it is not as likely as for the dirft rate. For example, participants may adopt a more cautious strategy in harder conditions [@dutilh2012testing]. The prior on $\beta^{(\tau)}$ is relatively because, as mentioned above, non-decision time reflects perceptual encoding and motor execution processes, and those are not expected to change substantially across task conditions.
+
+## Design
+
+We varied the number of participants ($I \in \{20, 60, 150\}$) and the number of trials per participant per condition ($J \in \{20, 60, 150\}$), which made up a $3 \times 3$ design. For each combination, we ran $50$ simulations. The data were generated from the true parameter values. Each dataset was fitted using the Stan model described in the Implementation section, with convergence monitored by checking $\hat{R}$. Fits with any  $\hat{R}$ exceeding $1.05$ were refitted with more iterations and a higher acceptance rate (`adapt_delta = 0.95`). Fits that still did not converge after the second attempt were excluded from the results. X simulations (X %) were excluded in total. 
+
+## Results
+
+### Model without conditions 
+
+### Model with conditions
+
+The violin figures below display the sampling distributions of estimation bias (i.e., the posterior mean minus the true parameter value) for the 
+three group-level mean parameters ($\mu^{(\nu)}$, $\mu^{(\alpha)}$, $\mu^{(\tau)}$) across all combinations of number of participants ($I \in \{20, 60, 150\}$) and trials per participant ($J \in \{20, 60, 150\}$). 
+Each violin summarises the distribution of bias values across the $N = 50$ simulated datasets for a given $I \times J$ cell, the individual simulation 
+outcomes are displayed as jittered points. The dashed reference line indicates zero bias (and therefore perfect recovery). Wider violins that are centred near zero indicate good recovery with low systematic error. Violins shifted above or below the reference line indicate consistent over- or underestimation.
+
+$\mu^{(\nu)}$ and $\mu^{(\alpha)}$ showed good recovery across all design options, the bias distributions was centred around zero. The violin width decreased systematically with larger $I$ and $J$, reflecting an expected reduction in estimation variance as the amount of data increases. Recovery of 
+$\mu^{(\tau)}$ showed a small but consistent upward bias at lower sample sizes ($I = 20$), which attenuated as $I$ increased. This pattern is consistent with hierarchical shrinkage: when the number of participants is small, individual-level $\tau$ estimates are pulled toward the group mean, inflating the estimated mean. Across all parameters and design conditions, bias was negligible at $I \geq 60$ and $J \geq 60$. 
+
+
+
+```{r mean-bias-grid, echo=FALSE, fig.align='center', fig.width=6, fig.height=4, fig.pos='H'}
+# library(gridExtra)
+# library(png)
+# library(grid)
+# 
+# img1 <- readPNG("bias_group_mu_alpha.png")
+# img2 <- readPNG("bias_group_mu_nu.png")
+# img3 <- readPNG("bias_group_mu_tau.png")
+# 
+# 
+# g1 <- rasterGrob(img1, interpolate = TRUE)
+# g2 <- rasterGrob(img2, interpolate = TRUE)
+# g3 <- rasterGrob(img3, interpolate = TRUE)
+# 
+# grid.arrange(g1, g2, g3, ncol = 3)
+```
+
+
+
+```{r recovery-grid, echo=FALSE, fig.align='center', fig.width=6, fig.height=4, fig.pos='H'}
+# library(gridExtra)
+# library(png)
+# library(grid)
+# 
+# img4 <- readPNG("recovery_indiv_alpha.png")
+# img5 <- readPNG("recovery_indiv_nu.png")
+# img6 <- readPNG("recovery_indiv_tau.png")
+# 
+# 
+# g4 <- rasterGrob(img4, interpolate = TRUE)
+# g5 <- rasterGrob(img5, interpolate = TRUE)
+# g6 <- rasterGrob(img6, interpolate = TRUE)
+# 
+# grid.arrange(g4, g5, g6, ncol = 3)
+```
+
+
+_abstract über recoveries differentiert betrachten_ --> guidelines for simulations checken
+--> was für andere Maßegibt es um recovery zu judgen 
+--> distance, variance, bias...
+
+# Application to real data 
+
+example 
+
+## Prior 
+
+## Design 
+
+## Results 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\newpage
+# Discussion
+
+
+## Maybe use for discussion
+
+### from @lee_how_2011-4
+
+what is a hierarchical model: any model that is more complicated than the simplest type of model (a set of parameters $\theta$ generate a set of data $d$ through a likelihood function $f$ 
+  - this simple model accommodates Signal Detection Theory (SDT; @green1966signal; widely used in the modelling of memory, decision-making and reasoning)
+  - the SDT model provides a mapping from two parameters (measuring discriminability and a response criterion) to observed data (hit and false-alarm counts)
+  - another example: the Ratcliff diffusion model [@ratcliff2008diffusion] provides a mapping from a range of parameters (controlling bias, caution, evidence ...) to the joint distribution of accuracy and response times for simple decisions
+  - there are lots of cognitive models consistent with non-hierarchical mappings from parameters to data 
+  - all of these models would be good starting points for a hierarchical Bayesian extension
+  - by adding additional structure to the simple parameter-to-data relationship, it is possible to extend existing successful models of memory, learning, decision-making etc.
+  
+  
+- hierarchical Bayesian models extend cognitive models by adding a second level that explains not only behaviour, but also how the underlying psychological parameters are generated
+- instead of treating parameters as fixed, they are modelled as varying across individuals or contexts according to a higher-level distribution
+- this makes it possible to capture *individual differences* in a principled way, rather than analysing them post-hoc
+- it also enables inference about group-level properties (e.g., means and variances), and therefore providing a structured description of how cognitive processes vary
+- this leads to deeper and more complete theories, because the model explains both behaviour and the variability in the mechanisms that produce it
+
+hierarchical Bayesian models can link the same underlying psychological parameters to multiple tasks or types of data
+- specifically, a single set of parameters $\theta$ generates multiple datasets through different likelihood functions corresponding to different cognitive processes
+- this differs from other hierarchical structures because the hierarchy operates across tasks rather than across levels of abstraction: instead of modelling each task separately, the approach jointly models all data, allowing shared latent variables to explain multiple phenomena
+- usually, tasks are often modelled sequentially rather than simultaneously 
+- explaining many different observed phenomena by using a few variables is important for theories in cognitive science
+- by jointly modelling tasks, inference improves because information is shared across datasets: this leads to more unified, coherent, and parsimonious theories of cognition
+
+- observed data $d$ can be generated by multiple different cognitive processes $f_{1}, ..., f_{n}$, each with their own parameters $\theta_{1}, ..., \theta_{n}$
+- a higher-level mixing process $h$, governed by parameters $z$ determines how these processes combine to produce the data
+- this allows behaviour to be explained as arising from a mixture of qualitatively different processes rather than a single unified mechanism
+- hierarchical Bayesian models can represent behaviour as the outcome of multiple underlying cognitive processes: instead of assuming a single process explains all observations, they allow different processes to contribute to the same dataset
+- this is useful when some data reflect different strategies, errors, or “contaminant” processes that are not part of the core cognitive mechanism
+- the approach preserves simple core models while accounting for additional variability through separate processes
+- mixture modelling provides a more realistic and flexible account of behaviour, especially when participants switch strategies or produce atypical responses
+- by separating processes, inference about the main cognitive mechanism improves, because it is not distorted by irrelevant or noisy data
+- therefore, hierarchical models support more accurate and theoretically meaningful explanations by decomposing behaviour into multiple contributing processes
+
+hierarchical Bayesian models allow multiple competing cognitive models to be combined within a single framework instead of selecting only one
+- different models can explain the same observed data, and a higher-level process determines how they contribute
+- this shows how these different models arise, by introducing a higher-level generative structure over the models
+- therefore, variation across models is not arbitrary but explained by underlying psychological mechanisms or principles
+- example by @kemp2008discovery: show that different cognitive representations (clusters, trees, spatial structures) can all be generated from one common graph-based process --> explains how people can flexibly use different representations across domains, while still relying on shared underlying mechanisms
+- idea shift from model comparison (which one is best?) to model integration (how are the models related)
+- providing a way to learn model structure from data and capture cognitive flexibility across tasks 
+- addressee theoretical issues, for example that there are many heuristic models but there is no unifying explanation when or why which one is used 
+- therefore Bayesian hierarchical modelling can support deeper and more coherent theories through linking lots of diverse cognitive models to shared underlying processes 
+
+
+### from @vandekerckhove_hierarchical_2011-2
+
+Bayesian hierarchical modelling is useful in cognitive modelling because...
+
+- allows modelling individual differences directly, traditional cognitive models are often fit separately per participant
+Hierarchical models instead treat individuals as samples from a population and estimate both individual-level and group-level parameters simultaneously
+--> enables direct inference about population variability and more principled handling of inter individual differences
+
+- integrates experimental and correlational approaches, thereby bridging between experimental psychology (process models) and psychometrics (individual differences)
+--> results in models that explain both cognitive processes and variability between people aka a unified framework ("cognitive psychometrics")
+
+- enables analysis when there is little data on the individual level; when there are not many trials per participant the standard methods fail because the parameters cannot be reliably estimated per person --> hierarchical models pool information across participants and can therefore estimate even with few trials per individual
+
+- provides more stable and reliable parameter estimates by combining data across individuals --> less noisy than fitting each participant separately (e.g., population-level diffusion parameters can be estimated more reliably than with individual fits)
+
+- allows modelling of complex data structures because one can simultaneously model participants, items/stimuli, trials and conditions, supporting random effects (e.g., variability across people or items) and nested (or crossed) structures
+
+- allows selective parameter sharing and constraints, e.g., some parameters can vary across individuals and other can be constrained to be the same for each individuals, avoiding overly complex models with too many free parameters
+
+- enables explanation (not just description) of variability and differences --> explains them using predictors, e.g., drift rate can be modelled as a function of age, stimulus properties, and experimental manipulations
+
+- allows inclusion of both observed and latent predictors, which can include predictors (e.g., stimulus intensity, age) and latent variables (e.g., strategies, cognitive states), for example: mixture models can detect "hidden" subgroups of participants
+
+- supports interpretation of cognitive processes by using process models (e.g., diffusion model) at the measurement level --> the parameters have psychological meaning (e.g., drift rate = information processing speed) --> therefore the inference is about cognitive mechanisms
+
+- allows simultaneous modelling of multiple sources of variability --> it can model trial-to-trial variability, individual differences, condition effects, and population-level distributions, for example the diffusion model parameters are varying across trials (noise), individuals (individual differences), and conditions (experimental manipulations)
+
+- bayesian modelling make hierarchical models computationally feasible where classical methods would not be able to (e.g., estimation in high-dimensional parameter spaces) --> with bayesian its easier to handle complex hierarchical structures and they allow estimation via posterior distributions
+
+- provides intuitive probabilistic inference, it outputs a posterior distributions of parameters and enables direct probability statements (e.g., probability an effect $> 0$)
+
+- allows conclusions about single participants AND on the population-level (inferences about population distributions of cognitive parameters), e.g., the distribution of decision thresholds across participants
+
+- improves model fit and explanatory power by capturing more variance in data and accounting for unexplained variability (e.g., adding hierarchical structure and predictors reduces residual variance in drift rates)
+
+
+
+
+\newpage
+
+# References
+
+```{r create references, echo=FALSE}
+r_refs(file = "EZ_Paper.bib")
+```
+
+\begingroup
+\setlength{\parindent}{-0.5in}
+\setlength{\leftskip}{0.5in}
+
+<div id = "refs"></div>
+\endgroup
+
