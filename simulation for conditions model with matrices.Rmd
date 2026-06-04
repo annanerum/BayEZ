@@ -1,0 +1,2060 @@
+---
+title: "simulation conditions model with matrices"
+author: "Anne Giacobello"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+library(rstan)
+library(dplyr)
+```
+
+```{r simulate true values}
+set.seed(42)
+# true parameter values
+I <- 30; K <- 2; J_per <- 100
+
+true_mu_nu    <- 1.0;  true_b1_nu <- 0.3; true_b2_nu <- 0.5
+true_mu_alpha <- 1.5;  true_b_alpha <- 0.2
+true_mu_tau   <- 0.3;  true_b_tau   <- 0.02
+true_sigma_nu <- 0.3;  true_sigma_alpha <- 0.25; true_sigma_tau <- 0.15
+
+# participant-level covariate
+x <- rnorm(I)
+
+# condition dummy: 0 for k=1 und 1 for k=2
+cond_dummy <- c(0, 1)
+
+# simulate individual parameters and summary statistics
+J_arr <- array(J_per, dim = c(I, K))
+C_arr <- array(NA,    dim = c(I, K))
+MRT_mat <- array(NA, dim = c(I, K))
+VRT_mat <- array(NA, dim = c(I, K))
+for (i in 1:I) {
+  for (k in 1:K) {
+    mean_nu    <- true_mu_nu    + x[i] * true_b1_nu + cond_dummy[k] * true_b2_nu
+    mean_alpha <- true_mu_alpha + cond_dummy[k] * true_b_alpha
+    mean_tau   <- true_mu_tau   + cond_dummy[k] * true_b_tau
+    nu_i    <- rnorm(1, mean_nu,    true_sigma_nu)
+    alpha_i <- rnorm(1, mean_alpha, true_sigma_alpha)
+    tau_i   <- rnorm(1, mean_tau,   true_sigma_tau)
+    
+    # bounds
+    nu_i    <- max(-3,   min(3,   nu_i))
+    alpha_i <- max(0.1,  min(3.0, alpha_i))
+    tau_i   <- max(0.05, tau_i)
+    
+    u      <- exp(-alpha_i * nu_i)
+    pi_c   <- 1 / (1 + u)
+    mu_rt  <- tau_i + (alpha_i / (2 * nu_i)) * ((1 - u) / (1 + u))
+    sig2rt <- (alpha_i / (2 * nu_i^3)) *
+              ((1 - 2 * alpha_i * nu_i * u - u^2) / (1 + u)^2)
+    
+    C_i        <- rbinom(1, J_per, pi_c)
+    C_arr[i,k] <- max(C_i, 2)   # need at least 2 for VRT
+    MRT_mat[i,k] <- rnorm(1, mu_rt,  sqrt(sig2rt / C_arr[i,k]))
+    VRT_mat[i,k] <- rnorm(1, sig2rt, sqrt(2 * sig2rt^2 / (C_arr[i,k] - 1)))
+    VRT_mat[i,k] <- max(VRT_mat[i,k], 1e-6)
+    J_arr[i,k]   <- J_per
+  }
+}
+
+# design matrices
+X_nu    <- array(NA, dim = c(I, K, 3))
+X_alpha <- array(NA, dim = c(I, K, 2))
+X_tau   <- array(NA, dim = c(I, K, 2))
+for (i in 1:I) for (k in 1:K) {
+  X_nu[i,k,]    <- c(1, x[i], cond_dummy[k])
+  X_alpha[i,k,] <- c(1, cond_dummy[k])
+  X_tau[i,k,]   <- c(1, cond_dummy[k])
+}
+
+```
+
+
+```{r create data}
+stan_data <- list(
+  I = I, K = K,
+  P_nu = 3, P_alpha = 2, P_tau = 2,
+  J = J_arr, C = C_arr,
+  MRT = MRT_mat, VRT = VRT_mat,
+  X_nu = X_nu, X_alpha = X_alpha, X_tau = X_tau
+)
+```
+
+
+
+```{r fit model}
+ez_cond <- stan_model("model_w_cond_matrices.stan")
+fit <- sampling(ez_cond, data = stan_data,
+                chains = 4, iter = 2000, warmup = 1000,
+                cores = 4, refresh = 0)
+```
+
+```{r recovery check}
+# recovery
+print(fit, pars = c("beta_nu", "beta_alpha", "beta_tau",
+                    "sigma_nu", "sigma_alpha", "sigma_tau"),
+      digits = 2)
+```
+
+```{r recovery check mit figures}
+library(bayesplot)
+
+# extract posterior draws
+posterior <- as.array(fit)
+
+# parameters to focus on for convergence checks
+pars <- c("beta_nu[1]", "beta_nu[2]", "beta_nu[3]",
+          "beta_alpha[1]", "beta_alpha[2]",
+          "beta_tau[1]", "beta_tau[2]",
+          "sigma_nu", "sigma_alpha", "sigma_tau")
+
+# trace plots
+mcmc_trace(posterior, pars = pars)
+
+# R-hat plot, should be close to 1 
+rhats <- rhat(fit, pars = pars)
+mcmc_rhat(rhats)
+
+# neff should be > 0.1
+ratios <- neff_ratio(fit, pars = pars)
+mcmc_neff(ratios)
+
+```
+
+
+```{r bigger simulation}
+library(rstan)
+library(bayesplot)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# design
+I_vals <- c(20, 60, 150)
+J_vals <- c(20, 60, 150)
+N_sim  <- 50
+K      <- 2
+
+# true parameter values 
+true <- list(
+  mu_nu    = 1.0, b1_nu = 0.3, b2_nu = 0.5,
+  mu_alpha = 1.5, b_alpha = 0.2,
+  mu_tau   = 0.3, b_tau  = 0.02,
+  sigma_nu = 0.3, sigma_alpha = 0.25, sigma_tau = 0.15
+)
+
+# simulation and fit function
+run_one <- function(I, J_per, true, model) {
+  x          <- rnorm(I)
+  cond_dummy <- c(0, 1)
+  J_arr      <- array(J_per, dim = c(I, K))
+  C_arr      <- array(NA,    dim = c(I, K))
+  MRT_mat    <- array(NA,    dim = c(I, K))
+  VRT_mat    <- array(NA,    dim = c(I, K))
+
+  true_nu    <- array(NA, dim = c(I, K))
+  true_alpha <- array(NA, dim = c(I, K))
+  true_tau   <- array(NA, dim = c(I, K))
+
+  for (i in 1:I) for (k in 1:K) {
+    nu_i    <- rnorm(1, true$mu_nu    + x[i]*true$b1_nu + cond_dummy[k]*true$b2_nu, true$sigma_nu)
+    alpha_i <- rnorm(1, true$mu_alpha + cond_dummy[k]*true$b_alpha,                  true$sigma_alpha)
+    tau_i   <- rnorm(1, true$mu_tau   + cond_dummy[k]*true$b_tau,                    true$sigma_tau)
+
+    nu_i    <- max(-3,   min(3,   nu_i))
+    alpha_i <- max(0.1,  min(3.0, alpha_i))
+    tau_i   <- max(0.05, tau_i)
+
+    true_nu[i,k]    <- nu_i
+    true_alpha[i,k] <- alpha_i
+    true_tau[i,k]   <- tau_i
+
+    u      <- exp(-alpha_i * nu_i)
+    pi_c   <- 1 / (1 + u)
+    mu_rt  <- tau_i + (alpha_i / (2*nu_i)) * ((1 - u) / (1 + u))
+    sig2rt <- (alpha_i / (2*nu_i^3)) * ((1 - 2*alpha_i*nu_i*u - u^2) / (1+u)^2)
+
+    C_i          <- max(rbinom(1, J_per, pi_c), 2)
+    C_arr[i,k]   <- C_i
+    MRT_mat[i,k] <- rnorm(1, mu_rt,  sqrt(sig2rt / C_i))
+    VRT_mat[i,k] <- max(rnorm(1, sig2rt, sqrt(2*sig2rt^2 / (C_i-1))), 1e-6)
+    J_arr[i,k]   <- J_per
+  }
+
+  X_nu    <- array(NA, dim = c(I, K, 3))
+  X_alpha <- array(NA, dim = c(I, K, 2))
+  X_tau   <- array(NA, dim = c(I, K, 2))
+  for (i in 1:I) for (k in 1:K) {
+    X_nu[i,k,]    <- c(1, x[i], cond_dummy[k])
+    X_alpha[i,k,] <- c(1, cond_dummy[k])
+    X_tau[i,k,]   <- c(1, cond_dummy[k])
+  }
+
+  fit <- tryCatch(sampling(model,
+    data = list(I=I, K=K, P_nu=3, P_alpha=2, P_tau=2,
+                J=J_arr, C=C_arr, MRT=MRT_mat, VRT=VRT_mat,
+                X_nu=X_nu, X_alpha=X_alpha, X_tau=X_tau),
+    chains=2, iter=1500, warmup=500, cores=2, refresh=0),
+    error = function(e) NULL)
+
+  if (is.null(fit)) return(NULL)
+
+  summ <- summary(fit)$summary
+
+  # group-level parameters 
+  group_results <- data.frame(
+    param     = c("mu_nu", "mu_alpha", "mu_tau"),
+    true_val  = c(true$mu_nu, true$mu_alpha, true$mu_tau),
+    estimate  = summ[c("beta_nu[1]", "beta_alpha[1]", "beta_tau[1]"), "mean"],
+    q5        = summ[c("beta_nu[1]", "beta_alpha[1]", "beta_tau[1]"), "2.5%"],
+    q95       = summ[c("beta_nu[1]", "beta_alpha[1]", "beta_tau[1]"), "97.5%"],
+    condition = NA,
+    level     = "group",
+    I = I, J = J_per,
+    row.names = NULL
+  )
+
+  # individual-level parameters per condition
+  indiv_results <- bind_rows(lapply(1:K, function(k) {
+    nu_names    <- paste0("nu[",    1:I, ",", k, "]")
+    alpha_names <- paste0("alpha[", 1:I, ",", k, "]")
+    tau_names   <- paste0("tau[",   1:I, ",", k, "]")
+
+    bind_rows(
+      data.frame(param     = "nu",
+                 true_val  = true_nu[, k],
+                 estimate  = summ[nu_names,    "mean"],
+                 q5        = summ[nu_names,    "2.5%"],
+                 q95       = summ[nu_names,    "97.5%"],
+                 condition = k, level = "individual", I = I, J = J_per),
+      data.frame(param     = "alpha",
+                 true_val  = true_alpha[, k],
+                 estimate  = summ[alpha_names, "mean"],
+                 q5        = summ[alpha_names, "2.5%"],
+                 q95       = summ[alpha_names, "97.5%"],
+                 condition = k, level = "individual", I = I, J = J_per),
+      data.frame(param     = "tau",
+                 true_val  = true_tau[, k],
+                 estimate  = summ[tau_names,   "mean"],
+                 q5        = summ[tau_names,   "2.5%"],
+                 q95       = summ[tau_names,   "97.5%"],
+                 condition = k, level = "individual", I = I, J = J_per)
+    )
+  }))
+
+  bind_rows(group_results, indiv_results)
+}
+
+# run all conditions 
+set.seed(42)
+ez_cond <- stan_model("model_w_cond_matrices.stan")
+
+results <- bind_rows(lapply(I_vals, function(I) {
+  bind_rows(lapply(J_vals, function(J) {
+    bind_rows(lapply(seq_len(N_sim), function(s) run_one(I, J, true, ez_cond)))
+  }))
+}))
+
+# prepare for plotting 
+results <- results |>
+  mutate(
+    I_label = factor(paste0("I = ", I), levels = paste0("I = ", I_vals)),
+    J_label = factor(paste0("J = ", J), levels = paste0("J = ", J_vals)),
+    condition = ifelse(is.na(condition), NA, paste0("Condition ", condition))
+  )
+
+results_group <- results |> filter(level == "group")
+results_indiv <- results |> filter(level == "individual")
+
+# plot theme
+dark_theme <- theme(
+  plot.background  = element_rect(fill = "black", colour = NA),
+  plot.title       = element_text(colour = "white", size = 13, hjust = 0.5),
+  panel.background = element_rect(fill = "black", colour = NA),
+  panel.grid.major = element_line(colour = "grey25", linewidth = 0.3),
+  panel.grid.minor = element_blank(),
+  panel.border     = element_rect(colour = "white", fill = NA, linewidth = 0.4),
+  strip.background = element_rect(fill = "black", colour = NA),
+  strip.text       = element_text(colour = "white", size = 10),
+  axis.text        = element_text(colour = "white", size = 8),
+  axis.ticks       = element_line(colour = "white"),
+  axis.title       = element_blank(),
+  legend.position  = "none"
+)
+
+# plot function 
+make_plot <- function(df, param_name, label, by_condition = FALSE) {
+  p <- ggplot(df |> filter(param == param_name),
+              aes(x = true_val, y = estimate)) +
+    geom_abline(intercept = 0, slope = 1,
+                linetype = "dashed", colour = "white", linewidth = 0.5) +
+    geom_smooth(method = "lm", colour = "goldenrod3",
+                fill = "goldenrod3", alpha = 0.3, linewidth = 0.7) +
+    geom_point(colour = "goldenrod", alpha = 0.6, size = 1.2) +
+    labs(title = label) +
+    dark_theme
+
+  if (by_condition) {
+    p + facet_grid(I_label + condition ~ J_label)
+  } else {
+    p + facet_grid(I_label ~ J_label)
+  }
+}
+
+# group-level plots 
+group_labels <- list(
+  mu_nu    = expression(mu^{(nu)}),
+  mu_alpha = expression(mu^{(alpha)}),
+  mu_tau   = expression(mu^{(tau)})
+)
+
+plots_group <- lapply(names(group_labels), function(p)
+  make_plot(results_group, p, group_labels[[p]], by_condition = FALSE))
+names(plots_group) <- names(group_labels)
+
+# individual-level plots (split by condition) 
+indiv_labels <- list(
+  nu    = expression(nu),
+  alpha = expression(alpha),
+  tau   = expression(tau)
+)
+
+plots_indiv <- lapply(names(indiv_labels), function(p)
+  make_plot(results_indiv, p, indiv_labels[[p]], by_condition = TRUE))
+names(plots_indiv) <- names(indiv_labels)
+
+# view 
+plots_group[["mu_nu"]]
+plots_group[["mu_alpha"]]
+plots_group[["mu_tau"]]
+
+plots_indiv[["nu"]]
+plots_indiv[["alpha"]]
+plots_indiv[["tau"]]
+
+# save 
+for (p in names(plots_group)) {
+  ggsave(paste0("recovery_group_", p, ".png"),
+         plot = plots_group[[p]], width = 8, height = 7,
+         bg = "black", dpi = 300)
+}
+
+for (p in names(plots_indiv)) {
+  ggsave(paste0("recovery_indiv_", p, ".png"),
+         plot = plots_indiv[[p]], width = 8, height = 10,
+         bg = "black", dpi = 300)
+}
+
+```
+
+```{r testing biases for tau}
+# compute bias for individual tau estimates
+results_indiv <- results_indiv |>
+  mutate(bias = estimate - true_val)
+
+# does bias correlate with the true tau value
+ggplot(results_indiv |> filter(param == "tau"),
+       aes(x = true_val, y = bias)) +
+  geom_point(colour = "goldenrod", alpha = 0.3, size = 0.8) +
+  geom_smooth(method = "lm", colour = "white", fill = "grey40") +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "white") +
+  facet_grid(I_label + condition ~ J_label) +
+  labs(title = "Tau bias vs. true tau (boundary effect test)") +
+  dark_theme
+# negative slope = boundary pushes estimates at low true values
+
+# does tau bias correlate with nu bias
+bias_wide <- results_indiv |>
+  filter(param %in% c("tau", "nu")) |>
+  select(param, bias, condition, I, J, I_label, J_label) |>
+  group_by(param, condition, I, J, I_label, J_label) |>
+  mutate(id = row_number()) |>
+  pivot_wider(names_from = param, values_from = bias)
+
+ggplot(bias_wide, aes(x = nu, y = tau)) +
+  geom_point(colour = "goldenrod", alpha = 0.3, size = 0.8) +
+  geom_smooth(method = "lm", colour = "white", fill = "grey40") +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "white") +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "white") +
+  facet_grid(I_label + condition ~ J_label) +
+  labs(title = "Tau bias vs. nu bias (confounding test)",
+       x = "Nu bias", y = "Tau bias") +
+  dark_theme
+# negative correlation = tau and nu are compensating each other
+
+# does group-level mu_tau drive individual bias
+results_group |>
+  filter(param == "mu_tau") |>
+  mutate(group_bias = estimate - true_val) |>
+  ggplot(aes(x = true_val, y = estimate)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "white") +
+  geom_point(colour = "goldenrod", alpha = 0.6) +
+  geom_smooth(method = "lm", colour = "goldenrod3", fill = "goldenrod3", alpha = 0.3) +
+  facet_grid(I_label ~ J_label) +
+  labs(title = expression(paste("Group-level ", mu^{(tau)}, " recovery"))) +
+  dark_theme
+# if mu_tau is often above the line --> shrinkage
+
+# does bias worsen at high accuracy
+results_indiv |>
+  filter(param == "tau") |>
+  ggplot(aes(x = true_val, y = bias, colour = condition)) +
+  geom_point(alpha = 0.3, size = 0.8) +
+  geom_smooth(method = "lm") +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "white") +
+  scale_colour_manual(values = c("goldenrod", "steelblue")) +
+  facet_grid(I_label ~ J_label) +
+  labs(title = "Tau bias by condition (accuracy test)") +
+  dark_theme
+# if condition 1 (lower nu, lower accuracy) shows less bias than condition 2, the high accuracy destabilizes tau
+```
+
+```{r new big simulation with tau convergence errors fixed in the sampler}
+library(rstan)
+library(bayesplot)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+
+# design 
+I_vals <- c(20, 60, 150)
+J_vals <- c(20, 60, 150)
+N_sim  <- 50
+K      <- 2
+
+# true parameter values
+true <- list(
+  mu_nu    = 1.0, b1_nu = 0.3, b2_nu = 0.5,
+  mu_alpha = 1.5, b_alpha = 0.2,
+  mu_tau   = 0.3, b_tau  = 0.02,
+  sigma_nu = 0.3, sigma_alpha = 0.25, sigma_tau = 0.15
+)
+
+# simulation and fit function 
+run_one <- function(I, J_per, true, model,
+                    rhat_threshold = 1.05,
+                    hopeless_threshold = 10,
+                    iter1 = 1500, warmup1 = 500,
+                    iter2 = 3000, warmup2 = 1000) {
+
+  x          <- rnorm(I)
+  cond_dummy <- c(0, 1)
+  J_arr      <- array(J_per, dim = c(I, K))
+  C_arr      <- array(NA,    dim = c(I, K))
+  MRT_mat    <- array(NA,    dim = c(I, K))
+  VRT_mat    <- array(NA,    dim = c(I, K))
+  true_nu    <- array(NA,    dim = c(I, K))
+  true_alpha <- array(NA,    dim = c(I, K))
+  true_tau   <- array(NA,    dim = c(I, K))
+
+  for (i in 1:I) for (k in 1:K) {
+    nu_i    <- rnorm(1, true$mu_nu    + x[i]*true$b1_nu + cond_dummy[k]*true$b2_nu, true$sigma_nu)
+    alpha_i <- rnorm(1, true$mu_alpha + cond_dummy[k]*true$b_alpha,                  true$sigma_alpha)
+    tau_i   <- rnorm(1, true$mu_tau   + cond_dummy[k]*true$b_tau,                    true$sigma_tau)
+
+    nu_i    <- max(-3,   min(3,   nu_i))
+    alpha_i <- max(0.1,  min(3.0, alpha_i))
+    tau_i   <- max(0.05, tau_i)
+
+    true_nu[i,k]    <- nu_i
+    true_alpha[i,k] <- alpha_i
+    true_tau[i,k]   <- tau_i
+
+    u      <- exp(-alpha_i * nu_i)
+    pi_c   <- 1 / (1 + u)
+    mu_rt  <- tau_i + (alpha_i / (2*nu_i)) * ((1 - u) / (1 + u))
+    sig2rt <- (alpha_i / (2*nu_i^3)) * ((1 - 2*alpha_i*nu_i*u - u^2) / (1+u)^2)
+
+    C_i          <- max(rbinom(1, J_per, pi_c), 2)
+    C_arr[i,k]   <- C_i
+    MRT_mat[i,k] <- rnorm(1, mu_rt,  sqrt(sig2rt / C_i))
+    VRT_mat[i,k] <- max(rnorm(1, sig2rt, sqrt(2*sig2rt^2 / (C_i-1))), 1e-6)
+    J_arr[i,k]   <- J_per
+  }
+
+  X_nu    <- array(NA, dim = c(I, K, 3))
+  X_alpha <- array(NA, dim = c(I, K, 2))
+  X_tau   <- array(NA, dim = c(I, K, 2))
+  for (i in 1:I) for (k in 1:K) {
+    X_nu[i,k,]    <- c(1, x[i], cond_dummy[k])
+    X_alpha[i,k,] <- c(1, cond_dummy[k])
+    X_tau[i,k,]   <- c(1, cond_dummy[k])
+  }
+
+  stan_data <- list(I=I, K=K, P_nu=3, P_alpha=2, P_tau=2,
+                    J=J_arr, C=C_arr, MRT=MRT_mat, VRT=VRT_mat,
+                    X_nu=X_nu, X_alpha=X_alpha, X_tau=X_tau)
+
+  # return clean exclusion row
+  exclude_row <- function(reason) {
+    data.frame(param=NA, true_val=NA, estimate=NA, q5=NA, q95=NA,
+               condition=NA, level=NA, excluded=TRUE,
+               reason=reason, I=I, J=J_per)
+  }
+
+  # true when fit is so degenerate that refitting is useless
+  # triggers if any R-hat > hopeless_threshold or if R-hats contain NaN or Inf
+  hopeless <- function(fit) {
+    rhats <- tryCatch(summary(fit)$summary[, "Rhat"], error = function(e) NA)
+    any(is.nan(rhats) | is.infinite(rhats) | rhats > hopeless_threshold,
+        na.rm = FALSE)
+  }
+
+  # helper: TRUE when all R-hats are below the convergence threshold
+  converged <- function(fit) {
+    rhats <- summary(fit)$summary[, "Rhat"]
+    !any(rhats > rhat_threshold, na.rm = TRUE)
+  }
+
+  # first attempt
+  fit <- tryCatch(
+    sampling(model, data = stan_data,
+             chains=2, iter=iter1, warmup=warmup1,
+             cores=2, refresh=0,
+             control=list(adapt_delta=0.90)),
+    error = function(e) NULL)
+
+  if (is.null(fit)) {
+    message("First fit crashed — skipping (I=", I, ", J=", J_per, ")")
+    return(exclude_row("crash_1"))
+  }
+
+  # check for hopeless degeneracy before attempting refit
+  if (hopeless(fit)) {
+    max_rhat <- round(max(summary(fit)$summary[, "Rhat"], na.rm = TRUE), 3)
+    message("Degenerate fit — excluding without refit (max Rhat=", max_rhat,
+            ", I=", I, ", J=", J_per, ")")
+    return(exclude_row("degenerate"))
+  }
+
+  # refit only if rhat_threshold < Rhat <= hopeless_threshold
+  if (!converged(fit)) {
+    max_rhat <- round(max(summary(fit)$summary[, "Rhat"], na.rm=TRUE), 3)
+    message("Refit triggered (max Rhat=", max_rhat,
+            ", I=", I, ", J=", J_per, ")")
+
+    fit <- tryCatch(
+      sampling(model, data=stan_data,
+               chains=4, iter=iter2, warmup=warmup2,
+               cores=4, refresh=0,
+               control=list(adapt_delta=0.95)),
+      error = function(e) NULL)
+
+    if (is.null(fit)) {
+      message("Second fit crashed — excluding (I=", I, ", J=", J_per, ")")
+      return(exclude_row("crash_2"))
+    }
+
+    if (!converged(fit)) {
+      max_rhat <- round(max(summary(fit)$summary[, "Rhat"], na.rm=TRUE), 3)
+      message("Still not converged after refit (max Rhat=", max_rhat,
+              ") — excluding (I=", I, ", J=", J_per, ")")
+      return(exclude_row("no_convergence"))
+    }
+  }
+
+  # extract results 
+  summ <- summary(fit)$summary
+
+  group_results <- data.frame(
+    param     = c("mu_nu", "mu_alpha", "mu_tau"),
+    true_val  = c(true$mu_nu, true$mu_alpha, true$mu_tau),
+    estimate  = summ[c("beta_nu[1]", "beta_alpha[1]", "beta_tau[1]"), "mean"],
+    q5        = summ[c("beta_nu[1]", "beta_alpha[1]", "beta_tau[1]"), "2.5%"],
+    q95       = summ[c("beta_nu[1]", "beta_alpha[1]", "beta_tau[1]"), "97.5%"],
+    condition = NA, level = "group", excluded = FALSE, reason = NA,
+    I = I, J = J_per, row.names = NULL
+  )
+
+  indiv_results <- bind_rows(lapply(1:K, function(k) {
+    nu_names    <- paste0("nu[",    1:I, ",", k, "]")
+    alpha_names <- paste0("alpha[", 1:I, ",", k, "]")
+    tau_names   <- paste0("tau[",   1:I, ",", k, "]")
+    bind_rows(
+      data.frame(param="nu",    true_val=true_nu[,k],
+                 estimate=summ[nu_names,    "mean"],
+                 q5=summ[nu_names,    "2.5%"], q95=summ[nu_names,    "97.5%"],
+                 condition=k, level="individual", excluded=FALSE, reason=NA,
+                 I=I, J=J_per),
+      data.frame(param="alpha", true_val=true_alpha[,k],
+                 estimate=summ[alpha_names, "mean"],
+                 q5=summ[alpha_names, "2.5%"], q95=summ[alpha_names, "97.5%"],
+                 condition=k, level="individual", excluded=FALSE, reason=NA,
+                 I=I, J=J_per),
+      data.frame(param="tau",   true_val=true_tau[,k],
+                 estimate=summ[tau_names,   "mean"],
+                 q5=summ[tau_names,   "2.5%"], q95=summ[tau_names,   "97.5%"],
+                 condition=k, level="individual", excluded=FALSE, reason=NA,
+                 I=I, J=J_per)
+    )
+  }))
+
+  bind_rows(group_results, indiv_results)
+}
+
+# run all conditions 
+set.seed(42)
+ez_cond <- stan_model("model_w_cond_matrices.stan")
+
+all_results <- bind_rows(lapply(I_vals, function(I) {
+  bind_rows(lapply(J_vals, function(J) {
+    bind_rows(lapply(seq_len(N_sim), function(s) run_one(I, J, true, ez_cond)))
+  }))
+}))
+
+# split good fits from excluded
+excluded <- all_results |> filter(excluded == TRUE)
+results  <- all_results |> filter(excluded == FALSE)
+
+# exclusion rate table 
+exclusion_table <- excluded |>
+  group_by(I, J) |>
+  summarise(n_excluded = n(), .groups = "drop") |>
+  mutate(pct = round(n_excluded / N_sim * 100, 1)) |>
+  pivot_wider(names_from=J, values_from=c(n_excluded, pct),
+              names_glue="{.value}_J{J}", values_fill=0)
+
+# cleaner version 
+exclusion_report <- excluded |>
+  group_by(I, J, reason) |>
+  summarise(n = n(), pct = round(n() / N_sim * 100, 1), .groups="drop")
+
+print(exclusion_report)
+
+# numbers for manuscript 
+total_sims  <- N_sim * length(I_vals) * length(J_vals)
+n_excluded  <- nrow(excluded)
+pct_overall <- round(n_excluded / total_sims * 100, 1)
+
+# prepare plotting 
+results <- results |>
+  mutate(
+    I_label   = factor(paste0("I = ", I), levels=paste0("I = ", I_vals)),
+    J_label   = factor(paste0("J = ", J), levels=paste0("J = ", J_vals)),
+    condition = ifelse(is.na(condition), NA, paste0("Condition ", condition))
+  )
+
+results_group <- results |> filter(level == "group")
+results_indiv <- results |> filter(level == "individual")
+
+# plot theme
+dark_theme <- theme(
+  plot.background  = element_rect(fill="black", colour=NA),
+  plot.title       = element_text(colour="white", size=13, hjust=0.5),
+  panel.background = element_rect(fill="black", colour=NA),
+  panel.grid.major = element_line(colour="grey25", linewidth=0.3),
+  panel.grid.minor = element_blank(),
+  panel.border     = element_rect(colour="white", fill=NA, linewidth=0.4),
+  strip.background = element_rect(fill="black", colour=NA),
+  strip.text       = element_text(colour="white", size=10),
+  axis.text        = element_text(colour="white", size=8),
+  axis.ticks       = element_line(colour="white"),
+  axis.title       = element_blank(),
+  legend.position  = "none"
+)
+
+# plot function 
+make_plot <- function(df, param_name, label, by_condition=FALSE) {
+  p <- ggplot(df |> filter(param == param_name),
+              aes(x=true_val, y=estimate)) +
+    geom_abline(intercept=0, slope=1,
+                linetype="dashed", colour="white", linewidth=0.5) +
+    geom_smooth(method="lm", colour="goldenrod3",
+                fill="goldenrod3", alpha=0.3, linewidth=0.7) +
+    geom_point(colour="goldenrod", alpha=0.6, size=1.2) +
+    labs(title=label) +
+    dark_theme
+
+  if (by_condition) {
+    p + facet_grid(I_label + condition ~ J_label)
+  } else {
+    p + facet_grid(I_label ~ J_label)
+  }
+}
+
+# group-level plots 
+group_labels <- list(
+  mu_nu    = expression(mu^{(nu)}),
+  mu_alpha = expression(mu^{(alpha)}),
+  mu_tau   = expression(mu^{(tau)})
+)
+
+plots_group <- lapply(names(group_labels), function(p)
+  make_plot(results_group, p, group_labels[[p]], by_condition=FALSE))
+names(plots_group) <- names(group_labels)
+
+# individual-level plots split by condition
+indiv_labels <- list(
+  nu    = expression(nu),
+  alpha = expression(alpha),
+  tau   = expression(tau)
+)
+
+plots_indiv <- lapply(names(indiv_labels), function(p)
+  make_plot(results_indiv, p, indiv_labels[[p]], by_condition=TRUE))
+names(plots_indiv) <- names(indiv_labels)
+
+# view 
+plots_group[["mu_nu"]]
+plots_group[["mu_alpha"]]
+plots_group[["mu_tau"]]
+
+plots_indiv[["nu"]]
+plots_indiv[["alpha"]]
+plots_indiv[["tau"]]
+
+# save 
+for (p in names(plots_group)) {
+  ggsave(paste0("recovery_group_", p, ".png"),
+         plot=plots_group[[p]], width=8, height=7,
+         bg="black", dpi=300)
+}
+
+for (p in names(plots_indiv)) {
+  ggsave(paste0("recovery_indiv_", p, ".png"),
+         plot=plots_indiv[[p]], width=8, height=10,
+         bg="black", dpi=300)
+}
+```
+
+
+```{r report exclusions}
+library(knitr)
+
+# reshape
+exclusion_table <- exclusion_report |>
+  group_by(I, J) |>
+  summarise(pct_excluded = sum(pct), .groups = "drop") |>
+  pivot_wider(names_from   = J,
+              values_from  = pct_excluded,
+              names_prefix = "J = ",
+              values_fill  = 0) |>
+  rename("I" = I)
+
+kable(exclusion_table,
+      caption = "Percentage of simulations excluded due to non-convergence 
+                 (R-hat > 1.05 after refit) per combination of number of 
+                 participants (I) and trials per participant (J).",
+      col.names = c("$I$", "J = 20", "J = 60", "J = 150"),
+      align = "c")
+```
+
+```{r group level estimates}
+# group-level bias and coverage 
+
+results_group <- results_group |>
+  mutate(
+    bias     = estimate - true_val,
+    covered  = q5 <= true_val & true_val <= q95
+  )
+
+# bias distributions (violin)
+plot_group_bias <- function(param_name, label) {
+  ggplot(results_group |> filter(param == param_name),
+         aes(x = J_label, y = bias)) +
+    geom_hline(yintercept = 0, colour = "white",
+               linetype = "dashed", linewidth = 0.5) +
+    geom_violin(fill = "goldenrod", colour = NA, alpha = 0.35,
+                trim = TRUE, scale = "width") +
+    geom_jitter(colour = "goldenrod", alpha = 0.7, size = 1.4,
+                width = 0.08) +
+    facet_grid(I_label ~ .) +
+    labs(title = label,
+         x = NULL, y = "Bias (estimate \u2212 true)") +
+    dark_theme +
+    theme(axis.title.y = element_text(colour = "white", size = 9))
+}
+
+bias_labels_group <- list(
+  mu_nu    = expression(mu^{(nu)}),
+  mu_alpha = expression(mu^{(alpha)}),
+  mu_tau   = expression(mu^{(tau)})
+)
+
+plots_bias_group <- lapply(names(bias_labels_group), function(p)
+  plot_group_bias(p, bias_labels_group[[p]]))
+names(plots_bias_group) <- names(bias_labels_group)
+
+plots_bias_group[["mu_nu"]]
+plots_bias_group[["mu_alpha"]]
+plots_bias_group[["mu_tau"]]
+
+
+# coverage rates 
+coverage_group <- results_group |>
+  group_by(param, I_label, J_label) |>
+  summarise(coverage = mean(covered, na.rm = TRUE) * 100,
+            .groups = "drop")
+
+plot_group_coverage <- function(param_name, label) {
+  ggplot(coverage_group |> filter(param == param_name),
+         aes(x = J_label, y = coverage)) +
+    geom_hline(yintercept = 95, colour = "white",
+               linetype = "dashed", linewidth = 0.5) +
+    geom_col(fill = "goldenrod", alpha = 0.8, width = 0.6) +
+    geom_text(aes(label = paste0(round(coverage, 1), "%")),
+              colour = "white", vjust = -0.4, size = 3) +
+    facet_grid(I_label ~ .) +
+    coord_cartesian(ylim = c(0, 105)) +
+    labs(title = label,
+         x = NULL, y = "95% CI coverage (%)") +
+    dark_theme +
+    theme(axis.title.y = element_text(colour = "white", size = 9))
+}
+
+plots_cov_group <- lapply(names(bias_labels_group), function(p)
+  plot_group_coverage(p, bias_labels_group[[p]]))
+names(plots_cov_group) <- names(bias_labels_group)
+
+plots_cov_group[["mu_nu"]]
+plots_cov_group[["mu_alpha"]]
+plots_cov_group[["mu_tau"]]
+
+
+# save 
+for (p in names(plots_bias_group)) {
+  ggsave(paste0("bias_group_", p, ".png"),
+         plot = plots_bias_group[[p]], width = 5, height = 7,
+         bg = "black", dpi = 300)
+  ggsave(paste0("coverage_group_", p, ".png"),
+         plot = plots_cov_group[[p]], width = 5, height = 7,
+         bg = "black", dpi = 300)
+}
+```
+
+```{r save results}
+saveRDS(all_results, file = "simulation_results.rds")
+```
+
+```{r reload}
+# reload results 
+all_results <- readRDS("simulation_results.rds")
+
+# re-run the post-processing block 
+excluded <- all_results |> filter(excluded == TRUE)
+results  <- all_results |> filter(excluded == FALSE)
+
+exclusion_report <- excluded |>
+  group_by(I, J, reason) |>
+  summarise(n = n(), pct = round(n() / N_sim * 100, 1), .groups = "drop")
+
+total_sims  <- N_sim * length(I_vals) * length(J_vals)
+n_excluded  <- nrow(excluded)
+pct_overall <- round(n_excluded / total_sims * 100, 1)
+
+results <- results |>
+  mutate(
+    I_label   = factor(paste0("I = ", I), levels = paste0("I = ", I_vals)),
+    J_label   = factor(paste0("J = ", J), levels = paste0("J = ", J_vals)),
+    condition = ifelse(is.na(condition), NA, paste0("Condition ", condition))
+  )
+
+results_group <- results |> filter(level == "group")
+results_indiv <- results |> filter(level == "individual")
+```
+
+
+
+-----
+
+matrix[2, P_nu] prior_beta_nu	--> prior_beta_nu = priors$beta_nu (2×3 matrix from derive_priors())
+matrix[2, P_alpha] prior_beta_alpha	--> prior_beta_alpha = priors$beta_alpha (2×2 matrix)
+matrix[2, P_tau] prior_beta_tau	--> prior_beta_tau = priors$beta_tau (2×2 matrix)
+vector[2] prior_sigma_nu -->	prior_sigma_nu = priors$sigma_nu (length-2 vector)
+vector[2] prior_sigma_alpha	--> prior_sigma_alpha = priors$sigma_alpha
+vector[2] prior_sigma_tau -->	prior_sigma_tau = priors$sigma_tau
+
+
+```{r new big simulation with priors from data}
+library(rstan)
+library(bayesplot)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(parallel)
+
+# design 
+I_vals <- c(20, 60, 150)
+J_vals <- c(20, 60, 150)
+N_sim  <- 5 #50
+K      <- 2
+
+# true parameter values
+true <- list(
+  mu_nu    = 1.0, b1_nu = 0.3, b2_nu = 0.5,
+  mu_alpha = 1.5, b_alpha = 0.2,
+  mu_tau   = 0.3, b_tau  = 0.02,
+  sigma_nu = 0.3, sigma_alpha = 0.25, sigma_tau = 0.15
+)
+
+# point estimates from observed statistics per participant
+ez_point_estimates <- function(C_arr, J_arr, MRT_mat, VRT_mat, I, K) {
+  nu_hat    <- matrix(NA, I, K)
+  alpha_hat <- matrix(NA, I, K)
+  tau_hat   <- matrix(NA, I, K)
+
+  for (i in 1:I) for (k in 1:K) {
+    J_ik  <- J_arr[i, k]
+    Pc    <- C_arr[i, k] / J_ik
+    Pc    <- max(min(Pc, 1 - 1 / (2 * J_ik)), 1 / (2 * J_ik))
+    VRT   <- VRT_mat[i, k]
+    MRT   <- MRT_mat[i, k]
+
+    L      <- log(Pc / (1 - Pc))
+    inside <- L * (Pc^2 * L - Pc * L + Pc - 0.5) / VRT
+
+    if (is.na(inside) || inside <= 0) next
+
+    nu_ik    <- sign(Pc - 0.5) * inside^(1/4)
+    if (abs(nu_ik) < 1e-6) next
+
+    alpha_ik <- L / nu_ik
+    u        <- exp(-alpha_ik * nu_ik)
+    tau_ik   <- MRT - (alpha_ik / (2 * nu_ik)) * ((1 - u) / (1 + u))
+
+    nu_hat[i, k]    <- nu_ik
+    alpha_hat[i, k] <- alpha_ik
+    tau_hat[i, k]   <- tau_ik
+  }
+
+  list(nu = nu_hat, alpha = alpha_hat, tau = tau_hat)
+}
+
+# take prior matrices from EZ point estimates
+# row 1 = prior means, row 2 = prior SDs
+# intercept mean = general mean of EZ estimates
+# slope mean = 0 (no direction)
+# SDs = 2 x SD EZ estimates 
+derive_priors <- function(ez) {
+  nu_vals    <- as.vector(ez$nu)
+  alpha_vals <- as.vector(ez$alpha)
+  tau_vals   <- as.vector(ez$tau)
+
+  nu_vals    <- nu_vals[!is.na(nu_vals) & nu_vals > -3   & nu_vals < 3]
+  alpha_vals <- alpha_vals[!is.na(alpha_vals) & alpha_vals > 0.1 & alpha_vals < 3]
+  tau_vals   <- tau_vals[!is.na(tau_vals) & tau_vals > 0.05]
+
+  nu_sd    <- sd(nu_vals)
+  alpha_sd <- sd(alpha_vals)
+  tau_sd   <- sd(tau_vals)
+
+  list(
+    beta_nu = matrix(
+      c(mean(nu_vals), 0,         0,
+        nu_sd * 2,     nu_sd * 2, nu_sd * 2),
+      nrow = 2, byrow = TRUE
+    ),
+    beta_alpha = matrix(
+      c(mean(alpha_vals), 0,
+        alpha_sd * 2,     alpha_sd * 2),
+      nrow = 2, byrow = TRUE
+    ),
+    beta_tau = matrix(
+      c(mean(tau_vals), 0,
+        tau_sd * 2,     tau_sd * 2),
+      nrow = 2, byrow = TRUE
+    ),
+    sigma_nu    = c(nu_sd,    nu_sd / 2),
+    sigma_alpha = c(alpha_sd, alpha_sd / 2),
+    sigma_tau   = c(tau_sd,   tau_sd / 2)
+  )
+}
+
+# simulation and fit
+run_one <- function(I, J_per, true, model,
+                    rhat_threshold     = 1.05,
+                    hopeless_threshold = 10,
+                    iter1 = 1000, warmup1 = 300,
+                    iter2 = 3000, warmup2 = 1000) {
+
+  x          <- rnorm(I)
+  cond_dummy <- c(0, 1)
+  J_arr      <- array(J_per, dim = c(I, K))
+  C_arr      <- array(NA,    dim = c(I, K))
+  MRT_mat    <- array(NA,    dim = c(I, K))
+  VRT_mat    <- array(NA,    dim = c(I, K))
+  true_nu    <- array(NA,    dim = c(I, K))
+  true_alpha <- array(NA,    dim = c(I, K))
+  true_tau   <- array(NA,    dim = c(I, K))
+
+  for (i in 1:I) for (k in 1:K) {
+    nu_i    <- rnorm(1, true$mu_nu    + x[i]*true$b1_nu + cond_dummy[k]*true$b2_nu, true$sigma_nu)
+    alpha_i <- rnorm(1, true$mu_alpha + cond_dummy[k]*true$b_alpha,                  true$sigma_alpha)
+    tau_i   <- rnorm(1, true$mu_tau   + cond_dummy[k]*true$b_tau,                    true$sigma_tau)
+
+    nu_i    <- max(-3,   min(3,   nu_i))
+    alpha_i <- max(0.1,  min(3.0, alpha_i))
+    tau_i   <- max(0.05, tau_i)
+
+    true_nu[i,k]    <- nu_i
+    true_alpha[i,k] <- alpha_i
+    true_tau[i,k]   <- tau_i
+
+    u      <- exp(-alpha_i * nu_i)
+    pi_c   <- 1 / (1 + u)
+    mu_rt  <- tau_i + (alpha_i / (2*nu_i)) * ((1 - u) / (1 + u))
+    sig2rt <- (alpha_i / (2*nu_i^3)) * ((1 - 2*alpha_i*nu_i*u - u^2) / (1+u)^2)
+
+    C_i          <- max(rbinom(1, J_per, pi_c), 2)
+    C_arr[i,k]   <- C_i
+    MRT_mat[i,k] <- rnorm(1, mu_rt,  sqrt(sig2rt / C_i))
+    VRT_mat[i,k] <- max(rnorm(1, sig2rt, sqrt(2*sig2rt^2 / (C_i-1))), 1e-6)
+    J_arr[i,k]   <- J_per
+  }
+
+  ez     <- ez_point_estimates(C_arr, J_arr, MRT_mat, VRT_mat, I, K)
+  priors <- derive_priors(ez)
+
+  X_nu    <- array(NA, dim = c(I, K, 3))
+  X_alpha <- array(NA, dim = c(I, K, 2))
+  X_tau   <- array(NA, dim = c(I, K, 2))
+  for (i in 1:I) for (k in 1:K) {
+    X_nu[i,k,]    <- c(1, x[i], cond_dummy[k])
+    X_alpha[i,k,] <- c(1, cond_dummy[k])
+    X_tau[i,k,]   <- c(1, cond_dummy[k])
+  }
+
+  stan_data <- list(
+    I = I, K = K, P_nu = 3, P_alpha = 2, P_tau = 2,
+    J = J_arr, C = C_arr, MRT = MRT_mat, VRT = VRT_mat,
+    X_nu = X_nu, X_alpha = X_alpha, X_tau = X_tau,
+    prior_beta_nu     = priors$beta_nu,
+    prior_beta_alpha  = priors$beta_alpha,
+    prior_beta_tau    = priors$beta_tau,
+    prior_sigma_nu    = priors$sigma_nu,
+    prior_sigma_alpha = priors$sigma_alpha,
+    prior_sigma_tau   = priors$sigma_tau
+  )
+
+  exclude_row <- function(reason) {
+    data.frame(param=NA, true_val=NA, estimate=NA, q5=NA, q95=NA,
+               condition=NA, level=NA, excluded=TRUE,
+               reason=reason, I=I, J=J_per)
+  }
+
+  hopeless <- function(fit) {
+    rhats <- tryCatch(summary(fit)$summary[, "Rhat"], error = function(e) NA)
+    any(is.nan(rhats) | is.infinite(rhats) | rhats > hopeless_threshold,
+        na.rm = FALSE)
+  }
+
+  converged <- function(fit) {
+    rhats <- summary(fit)$summary[, "Rhat"]
+    !any(rhats > rhat_threshold, na.rm = TRUE)
+  }
+
+  fit <- tryCatch(
+    sampling(model, data = stan_data,
+             chains=2, iter=iter1, warmup=warmup1,
+             cores=1, refresh=0,
+             control=list(adapt_delta=0.90)),
+    error = function(e) NULL)
+
+  if (is.null(fit)) {
+    message("First fit crashed — skipping (I=", I, ", J=", J_per, ")")
+    return(exclude_row("crash_1"))
+  }
+
+  if (hopeless(fit)) {
+    max_rhat <- round(max(summary(fit)$summary[, "Rhat"], na.rm = TRUE), 3)
+    message("Degenerate fit — excluding without refit (max Rhat=", max_rhat,
+            ", I=", I, ", J=", J_per, ")")
+    return(exclude_row("degenerate"))
+  }
+
+  if (!converged(fit)) {
+    max_rhat <- round(max(summary(fit)$summary[, "Rhat"], na.rm=TRUE), 3)
+    message("Refit triggered (max Rhat=", max_rhat,
+            ", I=", I, ", J=", J_per, ")")
+
+    fit <- tryCatch(
+      sampling(model, data=stan_data,
+               chains=4, iter=iter2, warmup=warmup2,
+               cores=1, refresh=0,
+               control=list(adapt_delta=0.95)),
+      error = function(e) NULL)
+
+    if (is.null(fit)) {
+      message("Second fit crashed — excluding (I=", I, ", J=", J_per, ")")
+      return(exclude_row("crash_2"))
+    }
+
+    if (!converged(fit)) {
+      max_rhat <- round(max(summary(fit)$summary[, "Rhat"], na.rm=TRUE), 3)
+      message("Still not converged after refit (max Rhat=", max_rhat,
+              ") — excluding (I=", I, ", J=", J_per, ")")
+      return(exclude_row("no_convergence"))
+    }
+  }
+
+  summ <- summary(fit)$summary
+
+  group_results <- data.frame(
+    param     = c("mu_nu", "mu_alpha", "mu_tau"),
+    true_val  = c(true$mu_nu, true$mu_alpha, true$mu_tau),
+    estimate  = summ[c("beta_nu[1]", "beta_alpha[1]", "beta_tau[1]"), "mean"],
+    q5        = summ[c("beta_nu[1]", "beta_alpha[1]", "beta_tau[1]"), "2.5%"],
+    q95       = summ[c("beta_nu[1]", "beta_alpha[1]", "beta_tau[1]"), "97.5%"],
+    condition = NA, level = "group", excluded = FALSE, reason = NA,
+    I = I, J = J_per, row.names = NULL
+  )
+
+  indiv_results <- bind_rows(lapply(1:K, function(k) {
+    nu_names    <- paste0("nu[",    1:I, ",", k, "]")
+    alpha_names <- paste0("alpha[", 1:I, ",", k, "]")
+    tau_names   <- paste0("tau[",   1:I, ",", k, "]")
+    bind_rows(
+      data.frame(param="nu",    true_val=true_nu[,k],
+                 estimate=summ[nu_names,    "mean"],
+                 q5=summ[nu_names,    "2.5%"], q95=summ[nu_names,    "97.5%"],
+                 condition=k, level="individual", excluded=FALSE, reason=NA,
+                 I=I, J=J_per),
+      data.frame(param="alpha", true_val=true_alpha[,k],
+                 estimate=summ[alpha_names, "mean"],
+                 q5=summ[alpha_names, "2.5%"], q95=summ[alpha_names, "97.5%"],
+                 condition=k, level="individual", excluded=FALSE, reason=NA,
+                 I=I, J=J_per),
+      data.frame(param="tau",   true_val=true_tau[,k],
+                 estimate=summ[tau_names,   "mean"],
+                 q5=summ[tau_names,   "2.5%"], q95=summ[tau_names,   "97.5%"],
+                 condition=k, level="individual", excluded=FALSE, reason=NA,
+                 I=I, J=J_per)
+    )
+  }))
+
+  bind_rows(group_results, indiv_results)
+}
+
+# -------------------------------------------------------
+# parallel simulation
+# -------------------------------------------------------
+
+jobs      <- expand.grid(I = I_vals, J = J_vals, sim = seq_len(N_sim))
+jobs_list <- split(jobs, seq_len(nrow(jobs)))
+
+n_workers <- detectCores() - 1
+cat("Running", nrow(jobs), "jobs on", n_workers, "workers\n")
+
+cl <- makeCluster(n_workers)
+
+clusterSetRNGStream(cl, 42)
+
+clusterExport(cl, varlist = c(
+  "run_one", "ez_point_estimates", "derive_priors",
+  "true", "K"
+))
+
+clusterEvalQ(cl, {
+  library(rstan)
+  library(dplyr)
+  rstan_options(auto_write = TRUE)
+  options(mc.cores = 1)
+  ez_cond <<- stan_model("new_model_w_cond_matrices.stan")
+})
+
+results_list <- parLapply(cl, jobs_list, function(row) {
+  run_one(
+    I     = row$I,
+    J_per = row$J,
+    true  = true,
+    model = ez_cond
+  )
+})
+
+stopCluster(cl)
+
+all_results <- bind_rows(results_list)
+saveRDS(all_results, file = "simulation_results.rds")
+
+# -------------------------------------------------------
+# post-processing
+# -------------------------------------------------------
+
+excluded <- all_results |> filter(excluded == TRUE)
+results  <- all_results |> filter(excluded == FALSE)
+
+exclusion_table <- excluded |>
+  group_by(I, J) |>
+  summarise(n_excluded = n(), .groups = "drop") |>
+  mutate(pct = round(n_excluded / N_sim * 100, 1)) |>
+  pivot_wider(names_from=J, values_from=c(n_excluded, pct),
+              names_glue="{.value}_J{J}", values_fill=0)
+
+exclusion_report <- excluded |>
+  group_by(I, J, reason) |>
+  summarise(n = n(), pct = round(n() / N_sim * 100, 1), .groups="drop")
+
+print(exclusion_report)
+
+total_sims  <- N_sim * length(I_vals) * length(J_vals)
+n_excluded  <- nrow(excluded)
+pct_overall <- round(n_excluded / total_sims * 100, 1)
+
+# -------------------------------------------------------
+# prepare plotting
+# -------------------------------------------------------
+
+results <- results |>
+  mutate(
+    I_label   = factor(paste0("I = ", I), levels=paste0("I = ", I_vals)),
+    J_label   = factor(paste0("J = ", J), levels=paste0("J = ", J_vals)),
+    condition = ifelse(is.na(condition), NA, paste0("Condition ", condition))
+  )
+
+results_group <- results |> filter(level == "group")
+results_indiv <- results |> filter(level == "individual")
+
+dark_theme <- theme(
+  plot.background  = element_rect(fill="black", colour=NA),
+  plot.title       = element_text(colour="white", size=13, hjust=0.5),
+  panel.background = element_rect(fill="black", colour=NA),
+  panel.grid.major = element_line(colour="grey25", linewidth=0.3),
+  panel.grid.minor = element_blank(),
+  panel.border     = element_rect(colour="white", fill=NA, linewidth=0.4),
+  strip.background = element_rect(fill="black", colour=NA),
+  strip.text       = element_text(colour="white", size=10),
+  axis.text        = element_text(colour="white", size=8),
+  axis.ticks       = element_line(colour="white"),
+  axis.title       = element_blank(),
+  legend.position  = "none"
+)
+
+make_plot <- function(df, param_name, label, by_condition=FALSE) {
+  p <- ggplot(df |> filter(param == param_name),
+              aes(x=true_val, y=estimate)) +
+    geom_abline(intercept=0, slope=1,
+                linetype="dashed", colour="white", linewidth=0.5) +
+    geom_smooth(method="lm", colour="goldenrod3",
+                fill="goldenrod3", alpha=0.3, linewidth=0.7) +
+    geom_point(colour="goldenrod", alpha=0.6, size=1.2) +
+    labs(title=label) +
+    dark_theme
+
+  if (by_condition) {
+    p + facet_grid(I_label + condition ~ J_label)
+  } else {
+    p + facet_grid(I_label ~ J_label)
+  }
+}
+
+group_labels <- list(
+  mu_nu    = expression(mu^{(nu)}),
+  mu_alpha = expression(mu^{(alpha)}),
+  mu_tau   = expression(mu^{(tau)})
+)
+
+plots_group <- lapply(names(group_labels), function(p)
+  make_plot(results_group, p, group_labels[[p]], by_condition=FALSE))
+names(plots_group) <- names(group_labels)
+
+indiv_labels <- list(
+  nu    = expression(nu),
+  alpha = expression(alpha),
+  tau   = expression(tau)
+)
+
+plots_indiv <- lapply(names(indiv_labels), function(p)
+  make_plot(results_indiv, p, indiv_labels[[p]], by_condition=TRUE))
+names(plots_indiv) <- names(indiv_labels)
+
+plots_group[["mu_nu"]];  plots_group[["mu_alpha"]];  plots_group[["mu_tau"]]
+plots_indiv[["nu"]];     plots_indiv[["alpha"]];     plots_indiv[["tau"]]
+
+for (p in names(plots_group)) {
+  ggsave(paste0("recovery_group_", p, ".png"),
+         plot=plots_group[[p]], width=8, height=7, bg="black", dpi=300)
+}
+for (p in names(plots_indiv)) {
+  ggsave(paste0("recovery_indiv_", p, ".png"),
+         plot=plots_indiv[[p]], width=8, height=10, bg="black", dpi=300)
+}
+```
+
+
+
+
+```{r check that stan uses the right arrays and not always the first one}
+
+library(rstan)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# small dataset 
+I_test <- 15
+J_test <- 100
+K      <- 2
+
+set.seed(99)
+
+true <- list(
+  mu_nu    = 1.0, b1_nu = 0.3, b2_nu = 0.5,
+  mu_alpha = 1.5, b_alpha = 0.2,
+  mu_tau   = 0.3, b_tau  = 0.02,
+  sigma_nu = 0.3, sigma_alpha = 0.25, sigma_tau = 0.15
+)
+
+# generate data
+x          <- rnorm(I_test)
+cond_dummy <- c(0, 1)
+J_arr      <- array(J_test, dim = c(I_test, K))
+C_arr      <- array(NA, dim = c(I_test, K))
+MRT_mat    <- array(NA, dim = c(I_test, K))
+VRT_mat    <- array(NA, dim = c(I_test, K))
+true_nu    <- array(NA, dim = c(I_test, K))
+true_alpha <- array(NA, dim = c(I_test, K))
+true_tau   <- array(NA, dim = c(I_test, K))
+
+for (i in 1:I_test) for (k in 1:K) {
+  nu_i    <- rnorm(1, true$mu_nu    + x[i]*true$b1_nu + cond_dummy[k]*true$b2_nu, true$sigma_nu)
+  alpha_i <- rnorm(1, true$mu_alpha + cond_dummy[k]*true$b_alpha,                  true$sigma_alpha)
+  tau_i   <- rnorm(1, true$mu_tau   + cond_dummy[k]*true$b_tau,                    true$sigma_tau)
+
+  nu_i    <- max(-3,   min(3,   nu_i))
+  alpha_i <- max(0.1,  min(3.0, alpha_i))
+  tau_i   <- max(0.05, tau_i)
+
+  true_nu[i,k]    <- nu_i
+  true_alpha[i,k] <- alpha_i
+  true_tau[i,k]   <- tau_i
+
+  u      <- exp(-alpha_i * nu_i)
+  pi_c   <- 1 / (1 + u)
+  mu_rt  <- tau_i + (alpha_i / (2*nu_i)) * ((1 - u) / (1 + u))
+  sig2rt <- (alpha_i / (2*nu_i^3)) * ((1 - 2*alpha_i*nu_i*u - u^2) / (1+u)^2)
+
+  C_i            <- max(rbinom(1, J_test, pi_c), 2)
+  C_arr[i,k]     <- C_i
+  MRT_mat[i,k]   <- rnorm(1, mu_rt,  sqrt(sig2rt / C_i))
+  VRT_mat[i,k]   <- max(rnorm(1, sig2rt, sqrt(2*sig2rt^2 / (C_i-1))), 1e-6)
+}
+
+X_nu    <- array(NA, dim = c(I_test, K, 3))
+X_alpha <- array(NA, dim = c(I_test, K, 2))
+X_tau   <- array(NA, dim = c(I_test, K, 2))
+for (i in 1:I_test) for (k in 1:K) {
+  X_nu[i,k,]    <- c(1, x[i], cond_dummy[k])
+  X_alpha[i,k,] <- c(1, cond_dummy[k])
+  X_tau[i,k,]   <- c(1, cond_dummy[k])
+}
+
+# derive priors from data
+ez    <- ez_point_estimates(C_arr, J_arr, MRT_mat, VRT_mat, I_test, K)
+priors <- derive_priors(ez)
+
+stan_data <- list(
+  I = I_test, K = K, P_nu = 3, P_alpha = 2, P_tau = 2,
+  J = J_arr, C = C_arr, MRT = MRT_mat, VRT = VRT_mat,
+  X_nu = X_nu, X_alpha = X_alpha, X_tau = X_tau,
+  prior_beta_nu     = priors$beta_nu,
+  prior_beta_alpha  = priors$beta_alpha,
+  prior_beta_tau    = priors$beta_tau,
+  prior_sigma_nu    = priors$sigma_nu,
+  prior_sigma_alpha = priors$sigma_alpha,
+  prior_sigma_tau   = priors$sigma_tau
+)
+
+# fit 
+ez_cond <- stan_model("new_model_w_cond_matrices.stan")
+
+fit_test <- sampling(ez_cond, data = stan_data,
+                     chains = 2, iter = 2000, warmup = 500,
+                     cores = 2, refresh = 0,
+                     control = list(adapt_delta = 0.90))
+
+summ <- summary(fit_test)$summary
+
+
+# do all [i, k] cells have distinct estimates?
+# extract posterior means for all cells
+
+diag_df <- bind_rows(lapply(1:K, function(k) {
+  bind_rows(lapply(1:I_test, function(i) {
+    data.frame(
+      i         = i,
+      k         = k,
+      condition = paste0("Condition ", k),
+      true_nu    = true_nu[i, k],
+      true_alpha = true_alpha[i, k],
+      true_tau   = true_tau[i, k],
+      est_nu     = summ[paste0("nu[",    i, ",", k, "]"), "mean"],
+      est_alpha  = summ[paste0("alpha[", i, ",", k, "]"), "mean"],
+      est_tau    = summ[paste0("tau[",   i, ",", k, "]"), "mean"]
+    )
+  }))
+}))
+
+# are all estimates distinct and not all collapsed to the same value?
+cat("Check 1: all estimates distinct? \n")
+cat("nu    unique estimates:", n_distinct(round(diag_df$est_nu,    4)), "/ expected", I_test * K, "\n")
+cat("alpha unique estimates:", n_distinct(round(diag_df$est_alpha, 4)), "/ expected", I_test * K, "\n")
+cat("tau   unique estimates:", n_distinct(round(diag_df$est_tau,   4)), "/ expected", I_test * K, "\n\n")
+
+
+# condition 2 estimates systematically higher than condition 1?
+cat("Check 2: condition shift in estimates \n")
+cat("True b2_nu (condition shift on nu):", true$b2_nu, "\n")
+cat("Observed shift (mean Cond2 - mean Cond1):\n")
+diag_df |>
+  group_by(condition) |>
+  summarise(mean_nu    = mean(est_nu),
+            mean_alpha = mean(est_alpha),
+            mean_tau   = mean(est_tau),
+            .groups = "drop") |>
+  print()
+
+
+# correlation between true and estimated values?
+
+cat("Check 3: correlation true vs estimated \n")
+cat("nu    correlation:", round(cor(diag_df$true_nu,    diag_df$est_nu),    3), "\n")
+cat("alpha correlation:", round(cor(diag_df$true_alpha, diag_df$est_alpha), 3), "\n")
+cat("tau   correlation:", round(cor(diag_df$true_tau,   diag_df$est_tau),   3), "\n\n")
+
+
+# plot true vs estimated per condition
+
+dark_theme <- theme(
+  plot.background  = element_rect(fill = "black", colour = NA),
+  plot.title       = element_text(colour = "white", size = 11, hjust = 0.5),
+  panel.background = element_rect(fill = "black", colour = NA),
+  panel.grid.major = element_line(colour = "grey25", linewidth = 0.3),
+  panel.grid.minor = element_blank(),
+  panel.border     = element_rect(colour = "white", fill = NA, linewidth = 0.4),
+  strip.background = element_rect(fill = "black", colour = NA),
+  strip.text       = element_text(colour = "white", size = 10),
+  axis.text        = element_text(colour = "white", size = 8),
+  axis.ticks       = element_line(colour = "white"),
+  axis.title       = element_text(colour = "white", size = 9),
+  legend.position  = "none"
+)
+
+make_check_plot <- function(true_col, est_col, title) {
+  ggplot(diag_df, aes(x = .data[[true_col]], y = .data[[est_col]],
+                      colour = condition)) +
+    geom_abline(intercept = 0, slope = 1,
+                linetype = "dashed", colour = "white", linewidth = 0.5) +
+    geom_point(size = 2.5, alpha = 0.85) +
+    geom_text(aes(label = i), colour = "white", size = 2.5,
+              vjust = -0.8, hjust = 0.5) +
+    scale_colour_manual(values = c("Condition 1" = "goldenrod",
+                                   "Condition 2" = "steelblue1")) +
+    facet_wrap(~ condition) +
+    labs(title = title,
+         x = "True value", y = "Posterior mean") +
+    dark_theme +
+    theme(legend.position = "none")
+}
+
+p_nu    <- make_check_plot("true_nu",    "est_nu",    expression(nu))
+p_alpha <- make_check_plot("true_alpha", "est_alpha", expression(alpha))
+p_tau   <- make_check_plot("true_tau",   "est_tau",   expression(tau))
+
+p_nu
+p_alpha
+p_tau
+```
+
+```{r find out which priors were used}
+set.seed(42)
+
+prior_summary <- bind_rows(lapply(I_vals, function(I) {
+  bind_rows(lapply(J_vals, function(J) {
+
+    # generate one dataset
+    x          <- rnorm(I)
+    cond_dummy <- c(0, 1)
+    J_arr      <- array(J, dim = c(I, K))
+    C_arr      <- array(NA, dim = c(I, K))
+    MRT_mat    <- array(NA, dim = c(I, K))
+    VRT_mat    <- array(NA, dim = c(I, K))
+
+    for (i in 1:I) for (k in 1:K) {
+      nu_i    <- max(-3, min(3,   rnorm(1, true$mu_nu    + x[i]*true$b1_nu + cond_dummy[k]*true$b2_nu, true$sigma_nu)))
+      alpha_i <- max(0.1, min(3.0, rnorm(1, true$mu_alpha + cond_dummy[k]*true$b_alpha, true$sigma_alpha)))
+      tau_i   <- max(0.05, rnorm(1, true$mu_tau + cond_dummy[k]*true$b_tau, true$sigma_tau))
+
+      u      <- exp(-alpha_i * nu_i)
+      pi_c   <- 1 / (1 + u)
+      mu_rt  <- tau_i + (alpha_i / (2*nu_i)) * ((1 - u) / (1 + u))
+      sig2rt <- (alpha_i / (2*nu_i^3)) * ((1 - 2*alpha_i*nu_i*u - u^2) / (1+u)^2)
+
+      C_i          <- max(rbinom(1, J, pi_c), 2)
+      C_arr[i,k]   <- C_i
+      MRT_mat[i,k] <- rnorm(1, mu_rt,  sqrt(sig2rt / C_i))
+      VRT_mat[i,k] <- max(rnorm(1, sig2rt, sqrt(2*sig2rt^2 / (C_i-1))), 1e-6)
+    }
+
+    ez     <- ez_point_estimates(C_arr, J_arr, MRT_mat, VRT_mat, I, K)
+    priors <- derive_priors(ez)
+
+    data.frame(
+      I = I, J = J,
+      # intercept priors (means)
+      prior_mean_nu    = round(priors$beta_nu[1, 1],    3),
+      prior_mean_alpha = round(priors$beta_alpha[1, 1], 3),
+      prior_mean_tau   = round(priors$beta_tau[1, 1],   3),
+      # intercept priors (SDs)
+      prior_sd_nu      = round(priors$beta_nu[2, 1],    3),
+      prior_sd_alpha   = round(priors$beta_alpha[2, 1], 3),
+      prior_sd_tau     = round(priors$beta_tau[2, 1],   3),
+      # sigma priors
+      prior_sigma_nu_mean    = round(priors$sigma_nu[1],    3),
+      prior_sigma_alpha_mean = round(priors$sigma_alpha[1], 3),
+      prior_sigma_tau_mean   = round(priors$sigma_tau[1],   3)
+    )
+  }))
+}))
+
+print(prior_summary)
+
+# table 
+kable(prior_summary,
+      caption = "Data-derived prior hyperparameters for a representative dataset
+                 per I x J condition. Prior means for intercepts are the grand
+                 mean of EZ point estimates; SDs are twice the SD of EZ estimates.",
+      col.names = c("I", "J",
+                    "mu_nu mean", "mu_alpha mean", "mu_tau mean",
+                    "mu_nu SD",   "mu_alpha SD",   "mu_tau SD",
+                    "sigma_nu",   "sigma_alpha",   "sigma_tau"),
+      align = "c")
+```
+
+full code am ende sollte haben
+- big simulation including data derived priors and random slope
+- violin plots for means and recovery plots mit reference line for individual parameters
+- Data-derived priors ausgeben damit man sehen kann welche benutzt wurden 
+- other measures for good convergence?
+
+
+
+```{r big simulation with random slope and hopefully everything fixed}
+library(rstan)
+library(bayesplot)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(parallel)
+
+# -------------------------------------------------------
+# design 
+# -------------------------------------------------------
+I_vals <- c(20, 60, 150)
+J_vals <- c(20, 60, 150)
+N_sim  <- 5 #50
+K      <- 2
+
+# true parameter values
+true <- list(
+  mu_nu    = 1.0, b1_nu = 0.3, b2_nu = 0.5,
+  mu_alpha = 1.5, b_alpha = 0.2,
+  mu_tau   = 0.3, b_tau  = 0.02,
+  sigma_nu = 0.3, sigma_alpha = 0.25, sigma_tau = 0.15,
+  sigma_u  = 0.15
+)
+
+# -------------------------------------------------------
+# EZ inverse equations
+# -------------------------------------------------------
+ez_point_estimates <- function(C_arr, J_arr, MRT_mat, VRT_mat, I, K) {
+  nu_hat    <- matrix(NA, I, K)
+  alpha_hat <- matrix(NA, I, K)
+  tau_hat   <- matrix(NA, I, K)
+
+  for (i in 1:I) for (k in 1:K) {
+    J_ik  <- J_arr[i, k]
+    Pc    <- C_arr[i, k] / J_ik
+    Pc    <- max(min(Pc, 1 - 1 / (2 * J_ik)), 1 / (2 * J_ik))
+    VRT   <- VRT_mat[i, k]
+    MRT   <- MRT_mat[i, k]
+
+    L      <- log(Pc / (1 - Pc))
+    inside <- L * (Pc^2 * L - Pc * L + Pc - 0.5) / VRT
+
+    if (is.na(inside) || inside <= 0) next
+
+    nu_ik    <- sign(Pc - 0.5) * inside^(1/4)
+    if (abs(nu_ik) < 1e-6) next
+
+    alpha_ik <- L / nu_ik
+    ev       <- exp(-alpha_ik * nu_ik)
+    tau_ik   <- MRT - (alpha_ik / (2 * nu_ik)) * ((1 - ev) / (1 + ev))
+
+    nu_hat[i, k]    <- nu_ik
+    alpha_hat[i, k] <- alpha_ik
+    tau_hat[i, k]   <- tau_ik
+  }
+
+  list(nu = nu_hat, alpha = alpha_hat, tau = tau_hat)
+}
+
+# -------------------------------------------------------
+# derive priors from EZ point estimates
+# -------------------------------------------------------
+derive_priors <- function(ez) {
+  nu_vals    <- as.vector(ez$nu)
+  alpha_vals <- as.vector(ez$alpha)
+  tau_vals   <- as.vector(ez$tau)
+
+  nu_vals    <- nu_vals[!is.na(nu_vals) & nu_vals > -3   & nu_vals < 3]
+  alpha_vals <- alpha_vals[!is.na(alpha_vals) & alpha_vals > 0.1 & alpha_vals < 3]
+  tau_vals   <- tau_vals[!is.na(tau_vals) & tau_vals > 0.05]
+
+  nu_sd    <- sd(nu_vals)
+  alpha_sd <- sd(alpha_vals)
+  tau_sd   <- sd(tau_vals)
+
+  list(
+    beta_nu = matrix(
+      c(mean(nu_vals), 0,         0,
+        nu_sd * 2,     nu_sd * 2, nu_sd * 2),
+      nrow = 2, byrow = TRUE
+    ),
+    beta_alpha = matrix(
+      c(mean(alpha_vals), 0,
+        alpha_sd * 2,     alpha_sd * 2),
+      nrow = 2, byrow = TRUE
+    ),
+    beta_tau = matrix(
+      c(mean(tau_vals), 0,
+        tau_sd * 2,     tau_sd * 2),
+      nrow = 2, byrow = TRUE
+    ),
+    sigma_nu    = c(nu_sd,        nu_sd / 2),
+    sigma_alpha = c(alpha_sd,     alpha_sd / 2),
+    sigma_tau   = c(tau_sd,       tau_sd / 2),
+    sigma_u     = c(nu_sd * 0.3,  nu_sd)
+  )
+}
+
+# -------------------------------------------------------
+# simulation and fit
+# -------------------------------------------------------
+run_one <- function(I, J_per, true, model,
+                    rhat_threshold     = 1.05,
+                    hopeless_threshold = 10,
+                    iter1 = 1000, warmup1 = 300,
+                    iter2 = 3000, warmup2 = 1000) {
+
+  x          <- rnorm(I)
+  cond_dummy <- c(0, 1)
+  J_arr      <- array(J_per, dim = c(I, K))
+  C_arr      <- array(NA,    dim = c(I, K))
+  MRT_mat    <- array(NA,    dim = c(I, K))
+  VRT_mat    <- array(NA,    dim = c(I, K))
+  true_nu    <- array(NA,    dim = c(I, K))
+  true_alpha <- array(NA,    dim = c(I, K))
+  true_tau   <- array(NA,    dim = c(I, K))
+
+  true_u <- rnorm(I, 0, true$sigma_u)
+
+  for (i in 1:I) for (k in 1:K) {
+    nu_i    <- rnorm(1, true$mu_nu + (true$b1_nu + true_u[i]) * x[i] +
+                          cond_dummy[k] * true$b2_nu, true$sigma_nu)
+    alpha_i <- rnorm(1, true$mu_alpha + cond_dummy[k]*true$b_alpha, true$sigma_alpha)
+    tau_i   <- rnorm(1, true$mu_tau   + cond_dummy[k]*true$b_tau,   true$sigma_tau)
+
+    nu_i    <- max(-3,   min(3,   nu_i))
+    alpha_i <- max(0.1,  min(3.0, alpha_i))
+    tau_i   <- max(0.05, tau_i)
+
+    true_nu[i,k]    <- nu_i
+    true_alpha[i,k] <- alpha_i
+    true_tau[i,k]   <- tau_i
+
+    ev     <- exp(-alpha_i * nu_i)
+    pi_c   <- 1 / (1 + ev)
+    mu_rt  <- tau_i + (alpha_i / (2*nu_i)) * ((1 - ev) / (1 + ev))
+    sig2rt <- (alpha_i / (2*nu_i^3)) * ((1 - 2*alpha_i*nu_i*ev - ev^2) / (1+ev)^2)
+
+    C_i          <- max(rbinom(1, J_per, pi_c), 2)
+    C_arr[i,k]   <- C_i
+    MRT_mat[i,k] <- rnorm(1, mu_rt,  sqrt(sig2rt / C_i))
+    VRT_mat[i,k] <- max(rnorm(1, sig2rt, sqrt(2*sig2rt^2 / (C_i-1))), 1e-6)
+    J_arr[i,k]   <- J_per
+  }
+
+  ez     <- ez_point_estimates(C_arr, J_arr, MRT_mat, VRT_mat, I, K)
+  priors <- derive_priors(ez)
+
+  X_nu    <- array(NA, dim = c(I, K, 3))
+  X_alpha <- array(NA, dim = c(I, K, 2))
+  X_tau   <- array(NA, dim = c(I, K, 2))
+  for (i in 1:I) for (k in 1:K) {
+    X_nu[i,k,]    <- c(1, x[i], cond_dummy[k])
+    X_alpha[i,k,] <- c(1, cond_dummy[k])
+    X_tau[i,k,]   <- c(1, cond_dummy[k])
+  }
+
+  stan_data <- list(
+    I = I, K = K, P_nu = 3, P_alpha = 2, P_tau = 2,
+    J = J_arr, C = C_arr, MRT = MRT_mat, VRT = VRT_mat,
+    X_nu = X_nu, X_alpha = X_alpha, X_tau = X_tau,
+    x = x,
+    prior_beta_nu     = priors$beta_nu,
+    prior_beta_alpha  = priors$beta_alpha,
+    prior_beta_tau    = priors$beta_tau,
+    prior_sigma_nu    = priors$sigma_nu,
+    prior_sigma_alpha = priors$sigma_alpha,
+    prior_sigma_tau   = priors$sigma_tau,
+    prior_sigma_u     = priors$sigma_u
+  )
+
+  exclude_row <- function(reason) {
+    data.frame(param=NA, true_val=NA, estimate=NA, q5=NA, q95=NA,
+               condition=NA, level=NA, excluded=TRUE,
+               reason=reason, I=I, J=J_per,
+               prior_mean=NA, prior_sd=NA)
+  }
+
+  hopeless <- function(fit) {
+    rhats <- tryCatch(summary(fit)$summary[, "Rhat"], error = function(e) NA)
+    any(is.nan(rhats) | is.infinite(rhats) | rhats > hopeless_threshold,
+        na.rm = FALSE)
+  }
+
+  converged <- function(fit) {
+    rhats <- summary(fit)$summary[, "Rhat"]
+    !any(rhats > rhat_threshold, na.rm = TRUE)
+  }
+
+  fit <- tryCatch(
+    sampling(model, data = stan_data,
+             chains=2, iter=iter1, warmup=warmup1,
+             cores=1, refresh=0,
+             control=list(adapt_delta=0.90)),
+    error = function(e) NULL)
+
+  if (is.null(fit)) {
+    message("First fit crashed — skipping (I=", I, ", J=", J_per, ")")
+    return(exclude_row("crash_1"))
+  }
+
+  if (hopeless(fit)) {
+    max_rhat <- round(max(summary(fit)$summary[, "Rhat"], na.rm = TRUE), 3)
+    message("Degenerate fit — excluding without refit (max Rhat=", max_rhat,
+            ", I=", I, ", J=", J_per, ")")
+    return(exclude_row("degenerate"))
+  }
+
+  if (!converged(fit)) {
+    max_rhat <- round(max(summary(fit)$summary[, "Rhat"], na.rm=TRUE), 3)
+    message("Refit triggered (max Rhat=", max_rhat,
+            ", I=", I, ", J=", J_per, ")")
+
+    fit <- tryCatch(
+      sampling(model, data=stan_data,
+               chains=4, iter=iter2, warmup=warmup2,
+               cores=1, refresh=0,
+               control=list(adapt_delta=0.95)),
+      error = function(e) NULL)
+
+    if (is.null(fit)) {
+      message("Second fit crashed — excluding (I=", I, ", J=", J_per, ")")
+      return(exclude_row("crash_2"))
+    }
+
+    if (!converged(fit)) {
+      max_rhat <- round(max(summary(fit)$summary[, "Rhat"], na.rm=TRUE), 3)
+      message("Still not converged after refit (max Rhat=", max_rhat,
+              ") — excluding (I=", I, ", J=", J_per, ")")
+      return(exclude_row("no_convergence"))
+    }
+  }
+
+  summ <- summary(fit)$summary
+
+  # save derived intercept priors alongside estimates for reporting
+  group_results <- data.frame(
+    param     = c("mu_nu", "mu_alpha", "mu_tau"),
+    true_val  = c(true$mu_nu, true$mu_alpha, true$mu_tau),
+    estimate  = summ[c("beta_nu[1]", "beta_alpha[1]", "beta_tau[1]"), "mean"],
+    q5        = summ[c("beta_nu[1]", "beta_alpha[1]", "beta_tau[1]"), "2.5%"],
+    q95       = summ[c("beta_nu[1]", "beta_alpha[1]", "beta_tau[1]"), "97.5%"],
+    condition = NA, level = "group", excluded = FALSE, reason = NA,
+    I = I, J = J_per,
+    prior_mean = c(priors$beta_nu[1,1], priors$beta_alpha[1,1], priors$beta_tau[1,1]),
+    prior_sd   = c(priors$beta_nu[2,1], priors$beta_alpha[2,1], priors$beta_tau[2,1]),
+    row.names  = NULL
+  )
+
+  indiv_results <- bind_rows(lapply(1:K, function(k) {
+    nu_names    <- paste0("nu[",    1:I, ",", k, "]")
+    alpha_names <- paste0("alpha[", 1:I, ",", k, "]")
+    tau_names   <- paste0("tau[",   1:I, ",", k, "]")
+    bind_rows(
+      data.frame(param="nu",    true_val=true_nu[,k],
+                 estimate=summ[nu_names,    "mean"],
+                 q5=summ[nu_names,    "2.5%"], q95=summ[nu_names,    "97.5%"],
+                 condition=k, level="individual", excluded=FALSE, reason=NA,
+                 I=I, J=J_per, prior_mean=NA, prior_sd=NA),
+      data.frame(param="alpha", true_val=true_alpha[,k],
+                 estimate=summ[alpha_names, "mean"],
+                 q5=summ[alpha_names, "2.5%"], q95=summ[alpha_names, "97.5%"],
+                 condition=k, level="individual", excluded=FALSE, reason=NA,
+                 I=I, J=J_per, prior_mean=NA, prior_sd=NA),
+      data.frame(param="tau",   true_val=true_tau[,k],
+                 estimate=summ[tau_names,   "mean"],
+                 q5=summ[tau_names,   "2.5%"], q95=summ[tau_names,   "97.5%"],
+                 condition=k, level="individual", excluded=FALSE, reason=NA,
+                 I=I, J=J_per, prior_mean=NA, prior_sd=NA)
+    )
+  }))
+
+  u_names <- paste0("u[", 1:I, "]")
+  u_results <- data.frame(
+    param     = "u",
+    true_val  = true_u,
+    estimate  = summ[u_names, "mean"],
+    q5        = summ[u_names, "2.5%"],
+    q95       = summ[u_names, "97.5%"],
+    condition = NA, level = "random_slope",
+    excluded  = FALSE, reason = NA,
+    I = I, J = J_per, prior_mean = NA, prior_sd = NA,
+    row.names = NULL
+  )
+
+  bind_rows(group_results, indiv_results, u_results)
+}
+
+# -------------------------------------------------------
+# parallel simulation
+# -------------------------------------------------------
+
+jobs      <- expand.grid(I = I_vals, J = J_vals, sim = seq_len(N_sim))
+jobs_list <- split(jobs, seq_len(nrow(jobs)))
+
+cache_file <- paste0(tools::file_path_sans_ext(
+  "new_model_w_cond_and_random_slope.stan"), ".rds")
+if (file.exists(cache_file)) file.remove(cache_file)
+
+n_workers <- detectCores() - 1
+cat("Running", nrow(jobs), "jobs on", n_workers, "workers\n")
+
+cl <- makeCluster(n_workers)
+clusterSetRNGStream(cl, 42)
+
+clusterExport(cl, varlist = c(
+  "run_one", "ez_point_estimates", "derive_priors",
+  "true", "K"
+))
+
+clusterEvalQ(cl, {
+  library(rstan)
+  library(dplyr)
+  rstan_options(auto_write = TRUE)
+  options(mc.cores = 1)
+  ez_cond <<- stan_model("new_model_w_cond_and_random_slope.stan")
+})
+
+results_list <- parLapply(cl, jobs_list, function(row) {
+  run_one(
+    I     = row$I,
+    J_per = row$J,
+    true  = true,
+    model = ez_cond
+  )
+})
+
+stopCluster(cl)
+
+all_results <- bind_rows(results_list)
+saveRDS(all_results, file = "simulation_results.rds")
+
+# -------------------------------------------------------
+# post-processing
+# -------------------------------------------------------
+
+excluded <- all_results |> filter(excluded == TRUE)
+results  <- all_results |> filter(excluded == FALSE)
+
+exclusion_report <- excluded |>
+  group_by(I, J, reason) |>
+  summarise(n = n(), pct = round(n() / N_sim * 100, 1), .groups="drop")
+print(exclusion_report)
+
+total_sims  <- N_sim * length(I_vals) * length(J_vals)
+n_excluded  <- nrow(excluded)
+pct_overall <- round(n_excluded / total_sims * 100, 1)
+
+results <- results |>
+  mutate(
+    I_label   = factor(paste0("I = ", I), levels=paste0("I = ", I_vals)),
+    J_label   = factor(paste0("J = ", J), levels=paste0("J = ", J_vals)),
+    condition = ifelse(is.na(condition), NA, paste0("Condition ", condition))
+  )
+
+results_group  <- results |> filter(level == "group")
+results_indiv  <- results |> filter(level == "individual")
+results_u      <- results |> filter(level == "random_slope")
+
+# -------------------------------------------------------
+# data-derived prior summary table
+# -------------------------------------------------------
+
+prior_summary <- results_group |>
+  group_by(param, I, J) |>
+  summarise(
+    prior_mean_avg = round(mean(prior_mean, na.rm=TRUE), 3),
+    prior_mean_sd  = round(sd(prior_mean,   na.rm=TRUE), 3),
+    prior_sd_avg   = round(mean(prior_sd,   na.rm=TRUE), 3),
+    prior_sd_sd    = round(sd(prior_sd,     na.rm=TRUE), 3),
+    .groups = "drop"
+  ) |>
+  mutate(
+    prior_mean_fmt = paste0(prior_mean_avg, " (", prior_mean_sd, ")"),
+    prior_sd_fmt   = paste0(prior_sd_avg,   " (", prior_sd_sd,   ")")
+  )
+
+cat("\n--- Data-derived priors (mean across simulations, SD in brackets) ---\n")
+print(prior_summary |> select(param, I, J, prior_mean_fmt, prior_sd_fmt))
+
+kable(
+  prior_summary |>
+    select(param, I, J, prior_mean_fmt, prior_sd_fmt) |>
+    rename(Parameter = param,
+           `Prior mean` = prior_mean_fmt,
+           `Prior SD`   = prior_sd_fmt),
+  caption = "Data-derived prior hyperparameters for the intercept of each
+             group-level parameter, averaged across simulations per I x J
+             condition. Values in brackets are the SD across simulations,
+             reflecting how much the derived priors vary with the data."
+)
+
+# -------------------------------------------------------
+# shared plot theme
+# -------------------------------------------------------
+
+dark_theme <- theme(
+  plot.background  = element_rect(fill="black", colour=NA),
+  plot.title       = element_text(colour="white", size=13, hjust=0.5),
+  panel.background = element_rect(fill="black", colour=NA),
+  panel.grid.major = element_line(colour="grey25", linewidth=0.3),
+  panel.grid.minor = element_blank(),
+  panel.border     = element_rect(colour="white", fill=NA, linewidth=0.4),
+  strip.background = element_rect(fill="black", colour=NA),
+  strip.text       = element_text(colour="white", size=10),
+  axis.text        = element_text(colour="white", size=8),
+  axis.ticks       = element_line(colour="white"),
+  axis.title       = element_text(colour="white", size=9),
+  legend.position  = "none"
+)
+
+# -------------------------------------------------------
+# violin plots for group-level means (bias distributions)
+# -------------------------------------------------------
+
+plot_group_bias <- function(param_name, label) {
+  df <- results_group |>
+    filter(param == param_name) |>
+    mutate(bias = estimate - true_val)
+
+  ggplot(df, aes(x = J_label, y = bias)) +
+    geom_hline(yintercept = 0,
+               linetype = "dashed", colour = "white", linewidth = 0.5) +
+    geom_violin(fill = "goldenrod", colour = NA,
+                alpha = 0.35, trim = TRUE, scale = "width") +
+    geom_jitter(colour = "goldenrod", alpha = 0.7,
+                size = 1.4, width = 0.08) +
+    stat_summary(fun = mean, geom = "crossbar",
+                 colour = "white", linewidth = 0.6,
+                 width = 0.4, fatten = 1) +
+    facet_grid(I_label ~ .) +
+    labs(title = label,
+         x = NULL,
+         y = "Bias (estimate \u2212 true)") +
+    dark_theme
+}
+
+bias_labels <- list(
+  mu_nu    = expression(mu^{(nu)}),
+  mu_alpha = expression(mu^{(alpha)}),
+  mu_tau   = expression(mu^{(tau)})
+)
+
+plots_bias <- lapply(names(bias_labels), function(p)
+  plot_group_bias(p, bias_labels[[p]]))
+names(plots_bias) <- names(bias_labels)
+
+# -------------------------------------------------------
+# recovery scatter plots for individual parameters
+# -------------------------------------------------------
+
+make_recovery_plot <- function(df, param_name, label, by_condition=FALSE) {
+  p <- ggplot(df |> filter(param == param_name),
+              aes(x = true_val, y = estimate)) +
+    geom_abline(intercept = 0, slope = 1,
+                linetype = "dashed", colour = "white", linewidth = 0.5) +
+    geom_smooth(method = "lm", colour = "goldenrod3",
+                fill = "goldenrod3", alpha = 0.3, linewidth = 0.7) +
+    geom_point(colour = "goldenrod", alpha = 0.6, size = 1.2) +
+    labs(title = label) +
+    dark_theme +
+    theme(axis.title = element_blank())
+
+  if (by_condition) {
+    p + facet_grid(I_label + condition ~ J_label)
+  } else {
+    p + facet_grid(I_label ~ J_label)
+  }
+}
+
+indiv_labels <- list(
+  nu    = expression(nu),
+  alpha = expression(alpha),
+  tau   = expression(tau)
+)
+
+plots_indiv <- lapply(names(indiv_labels), function(p)
+  make_recovery_plot(results_indiv, p, indiv_labels[[p]], by_condition=TRUE))
+names(plots_indiv) <- names(indiv_labels)
+
+plot_u <- make_recovery_plot(results_u, "u", expression(u[i]),
+                             by_condition=FALSE)
+
+# -------------------------------------------------------
+# view all plots
+# -------------------------------------------------------
+
+plots_bias[["mu_nu"]]
+plots_bias[["mu_alpha"]]
+plots_bias[["mu_tau"]]
+
+plots_indiv[["nu"]]
+plots_indiv[["alpha"]]
+plots_indiv[["tau"]]
+
+plot_u
+
+# -------------------------------------------------------
+# save all plots
+# -------------------------------------------------------
+
+for (p in names(plots_bias)) {
+  ggsave(paste0("bias_group_", p, ".png"),
+         plot = plots_bias[[p]], width = 5, height = 7,
+         bg = "black", dpi = 300)
+}
+
+for (p in names(plots_indiv)) {
+  ggsave(paste0("recovery_indiv_", p, ".png"),
+         plot = plots_indiv[[p]], width = 8, height = 10,
+         bg = "black", dpi = 300)
+}
+
+ggsave("recovery_u.png", plot = plot_u,
+       width = 8, height = 7, bg = "black", dpi = 300)
+```
+
+
+

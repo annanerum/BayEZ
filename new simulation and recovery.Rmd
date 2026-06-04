@@ -1,0 +1,1673 @@
+---
+title: "new simulation and recovery"
+author: "Anne Giacobello"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rstan)
+library(bayesplot)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(parallel)
+
+rstan_options(auto_write = TRUE)
+# save compiled Stan model automatically
+# compilation is slow --> need to do it only once and is reused on future runs
+
+options(mc.cores = 1)
+# use 1 CPU core per chain, overrode later when we do parallel mode
+# --> each worker runs on 1 core --> no problem with shared cores
+
+if (!dir.exists("output")) dir.create("output")
+# make output1 folder or store in that folder if already there
+
+## simulation grid
+I_vals <- c(40, 80, 160) # number of participants to test
+J_vals <- c(40, 80, 160) # trials per participant per condition to test
+N_sim  <- 30 # independent simulation replications per I×J combination
+K      <- 2 # how many conditions
+# 3x3x30 = 270 simulations
+
+## true parameters, simulation generates data from this
+# can they be recovered from data? 
+# stan only retrieves data generated from them 
+true <- list(
+  mu_nu    = 0.4, # mean/intercept for drift
+  b1_nu    = 0.1, # how much the covariate shifts drift in cond 1 
+  b2_nu    = 0.3, # difference cond 2 to cond 1 
+  mu_alpha = 1.5, # average boundary separation in condition 1
+  b_alpha  = 0.2, # condition 2 boundary is on average 0.2 wider 
+  mu_tau   = 0.3, # average non-decision time in condition 1 (in seconds)
+  b_tau    = 0.25,   # condition 2 NDT is 0.25 seconds longer 
+  sigma_nu    = 0.3, # how much individuals vary in (log-)drift (SD log scale)
+  sigma_alpha = 0.25, # how much individuals vary in boundary (SD)
+  sigma_tau   = 0.15, # how much individuals vary in NDT (SD)
+  sigma_v     = 0.2 # how much individuals vary in cond effect on boundary sep (SD of random slope)
+)
+
+## function takes observed data (how many correct, trials, mean RTs, RT variances) and computes point estimates of nu, alpha and tau
+# using the EZ equations
+# used only in "pilot" to derive priors 
+ez_point_estimates <- function(C_arr, J_arr, MRT_mat, VRT_mat, I, K) {
+# inputs:
+# C_arr: matrix of correct responses, I rows × K columns
+# J_arr: matrix of trials (same)
+# MRT_mat: matrix of mean RTs of correct responses
+# VRT_mat: matrix of RT variances
+# I: number of participants
+# K: number of conditions
+  nu_hat    <- matrix(NA, I, K)
+  alpha_hat <- matrix(NA, I, K)
+  tau_hat   <- matrix(NA, I, K)
+  # three empty I×K matrices
+  
+  for (i in seq_len(I)) { # for each participant (seq_len(I) safer than 1:I)
+    for (k in seq_len(K)) { # in each condition 
+      
+      Pc  <- C_arr[i, k] / J_arr[i, k] # proportion correct for participant i in condition k (correct responses divided by total trials)
+      
+      Pc  <- max(min(Pc, 1 - 1 / (2 * J_arr[i, k])), 1 / (2 * J_arr[i, k])) # Pc away from exactly 0 or 1 bc the EZ equations break down at         exact accuracy = 1 or 0 bc log of 0 is undefined) --> took smallest proportion possible that was not zero with J trials (1/(2*J))
+      
+      mrt <- MRT_mat[i, k] # mrt is matrix of i and k for mean of correct responses
+      vrt <- VRT_mat[i, k] # vrt same for variance 
+      
+      if (is.na(mrt) || is.na(vrt) || vrt <= 0) next # skip cell if mean RT or variance is NA or variance is zero or negative (bc then we           cannot compute the estimates)
+      
+      L   <- log(Pc / (1 - Pc)) # logit transformation so the log-odds of being correct 
+      # boundary × drift, alpha = L / nu 
+      # e.g.,  Pc = 0.8 --> L = log(0.8/0.2) = log(4) so about 1.39
+      
+      
+      nu4 <- L * (Pc^2 * L - Pc * L + Pc - 0.5) / vrt
+      # getting v(hoch 4) from the EZ inversion formulas
+      # rearrange EZ RT variance equation to isolate nu 
+      # nu^4 = L × (Pc^2 × L − Pc × L + Pc − 0.5) / VRT --> solve for nu
+      # alpha  = L / nu --> get alpha
+      # tau  = MRT − (alpha / 2xnu) × (2Pc − 1) --> get tau
+       
+      if (is.na(nu4) || nu4 <= 0) next # skip if  nu4 is negative or missing
+      
+      nu_hat[i, k]    <- sign(Pc - 0.5) * nu4^(1/4)
+      # drift rate estimate
+      # sign(Pc - 0.5) is +1 if accuracy > 50% (positive drift toward correct boundary) and −1 otherwise 
+      # sign returns 1 for positive values, -1 for negative values, and 0 for zero
+      
+      alpha_hat[i, k] <- L / nu_hat[i, k]
+      # boundary sep estimate from EZ --> boundary = log-odds / drift rate
+      
+      tau_hat[i, k]   <- mrt - (alpha_hat[i, k] / (2 * nu_hat[i, k])) * (2 * Pc - 1)
+      # NDT estimate -->  mean RT - decision time component ((alpha_hat[i, k] / (2 * nu_hat[i, k])) * (2 * Pc - 1)) = NDT
+    }
+  }
+  list(nu = nu_hat, alpha = alpha_hat, tau = tau_hat) # put all three matrices into list
+}
+
+
+
+
+## function takes EZ estimates from pilot data and turns them into prior hyperparameters (that we put into stan then)
+derive_priors <- function(ez) { # the input is "ez" so the list returned by by "ez_point_estimates"
+  
+  nu_vals    <- as.vector(ez$nu[!is.na(ez$nu) & ez$nu > 0])
+  # nu_vals = vector of all valid drift estimates
+  # ez$nu = I×K matrix but as single vector
+  # !is.na(ez$nu) and ez$nu > 0 --> keep only cells that are not missing and positive 
+  
+  alpha_vals <- as.vector(ez$alpha[!is.na(ez$alpha) & ez$alpha > 0])
+  # same for boundary sep 
+  
+  tau_vals   <- as.vector(ez$tau[!is.na(ez$tau) & ez$tau > 0.05])
+  # and for NDT but here its above 0.05 and not only positive
+  
+  log_nu_vals <- log(nu_vals)
+  # convert drift estimates to log scale bc nu is log-normally distributed in model so the priors have to be placed on log(nu)
+  
+  nu_sd    <- min(max(sd(log_nu_vals), 0.3), 1.5)
+  # compute SD of log(nu) across participants and conditions in pilot data
+  # ensure its above 0.3 and maximum 1.5 --> robustness for pilot
+  
+  alpha_sd <- min(max(sd(alpha_vals),  0.2), 1.0)
+  # same here but with diff values
+  tau_sd   <- min(max(sd(tau_vals),    0.1), 0.5)
+
+  list(
+    beta_nu    = matrix(c(mean(log_nu_vals), 0,       0,
+                          nu_sd,             nu_sd,   nu_sd),   
+                        nrow = 2, byrow = TRUE),
+    # 2×3 matrix
+    # row 1 = prior means for [intercept, covariate slope, condition slope] of nu
+    # row 2 = prior SDs
+    # intercept has mean(log_nu_vals) as prior mean so it is centred on what the pilot data says
+    # slopes have 0 bc we dont know direction
+    # byrow = TRUE fills matrix row by row 
+    
+    beta_alpha = matrix(c(mean(alpha_vals), 0,
+                          alpha_sd * 2,     alpha_sd * 2),
+                        nrow = 2, byrow = TRUE),
+    # for alpha its 2x2 and for tau too
+    beta_tau   = matrix(c(mean(tau_vals),   0,
+                          tau_sd * 2,       tau_sd * 2),
+                        nrow = 2, byrow = TRUE),
+    
+    sigma_nu    = c(nu_sd,    nu_sd / 2), # prior for population SD of log-drift = normal dist with mean = nu_sd and SD = nu_sd/2
+    sigma_alpha = c(alpha_sd, alpha_sd / 2), 
+    sigma_tau   = c(tau_sd,   tau_sd / 2),
+    sigma_v     = c(nu_sd * 0.3, nu_sd) # random slope variability --> nu_sd * 0.3 and nu_sd --> much uncertainty, wide prior
+  )
+}
+
+## function derives the priors from pilot aka 
+# that simulates separate set of pilot participants, generates data from the true parameters, and runs EZ formulas on them and then calls the function derive_priors to get the prior hyperparameters
+derive_priors_from_pilot <- function(J_per, true, I_pilot = 20) { 
+  # J_per = trials per condition in the pilot, true = true parameters, I_pilot = how many pilot participants so 20
+  K          <- 2
+  cond_dummy <- c(0, 1)
+  # cond 1 --> dummy variable 0 (reference)
+  # cond 2 --> 1 (treatment)
+  # multiplied by condition effect -->effect is zero for cond 1 and there is effect for cond 2
+  
+  x_p      <- rnorm(I_pilot, 0, 1)
+  true_v_p <- rnorm(I_pilot, 0, true$sigma_v)
+  # draw pilot ppns covariate values (x_p) from standard normal
+  # draw pilot ppns random slope values (true_v_p) from Normal(0, sigma_v)
+  # each ppn has own x and v
+  
+  # empty data matrices for the pilot participants --> filled by simulation 
+  J_p   <- matrix(J_per, I_pilot, K) # every cell is filled with J_per --> e.g., if J_per = 80 and I_pilot = 20, this is a 20×2 matrix of 80s
+  C_p   <- matrix(NA_integer_, I_pilot, K) # placeholder I_pilot × K matrix for integers (how many correct)
+  MRT_p <- matrix(NA_real_,    I_pilot, K) # same but real number because MRT
+  VRT_p <- matrix(NA_real_,    I_pilot, K) # same bc VRT
+  
+  
+  for (i in seq_len(I_pilot)) { # for ppn i
+    for (k in seq_len(K)) { # in cond k 
+      mean_nu_ik    <- true$mu_nu + true$b1_nu * x_p[i] + true$b2_nu * cond_dummy[k]
+      # computes log-scale mean for participant i in condition k
+      # = intercept + covariate effect * x + condition effect * dummy
+      # for cond 1 (dummy = 0) condition effect * dummy is gone (0)
+      
+      mean_alpha_ik <- true$mu_alpha + (true$b_alpha + true_v_p[i]) * cond_dummy[k]
+      # boundary sep mean per person per cond
+      # = intercept + (average condition effect + this ppns adjustment) * dummy
+      # again, 0 in cond 1, in cond 2 the ppns own random slope shifts boundary adjustment
+      
+      mean_tau_ik   <- true$mu_tau + true$b_tau * cond_dummy[k]
+      # NDT mean per person
+      
+      repeat { a <- rnorm(1, mean_alpha_ik, true$sigma_alpha)
+               if (a > 0.1 && a < 3.0) { ap <- a; break } }
+      # repeat loops forever until "break" hits
+      # draw alpha from normal dist and check whether it falls in the valid range, continues until valid draw and saves it (under ap)
+      
+      
+      np <- exp(rnorm(1, mean_nu_ik, true$sigma_nu))
+      # draws log-drift from normal(mean_nu_ik, sigma_nu) but exponentiated (makes it always positive so no repeating necessary)
+      
+      repeat { t <- rnorm(1, mean_tau_ik, true$sigma_tau)
+               if (t > 0.05) { tp <- t; break } }
+      # same for tau what we did for alpha
+      
+      
+      e      <- exp(-ap * np)
+      pi_c   <- 1 / (1 + e)
+      mu_rt  <- tp + (ap / (2 * np)) * ((1 - e) / (1 + e))
+      sig2rt <- (ap / (2 * np^3)) * ((1 - 2*ap*np*e - e^2) / (1 + e)^2)
+      # ez equations 
+      # given tau, alpha and nu, predict: e, predicted proportion correct, predicted mean RT for correct ones and predicted variance 
+      
+      C_ik <- rbinom(1, J_per, pi_c)
+      C_ik <- max(1L, min(C_ik, J_per - 1L))
+      # draw number of correct responses from binomial dist (J_per trials, probability pi_c)
+      # [1, J−1] again to not allow 0 or all correct because EZ formulas break then 
+      # 1L = integer 1
+
+      
+      MRT_p[i, k] <- rnorm(1, mu_rt, sqrt(sig2rt / C_ik))
+      # draw observed mean RT from normal dist centred on true mean RT
+      # SD is standard error of the mean RT --> gets smaller when more correct trials
+      
+      VRT_p[i, k] <- max(rnorm(1, sig2rt, sqrt(2 * sig2rt^2 / max(C_ik-1,1))), 1e-6)
+      # draw observed RT variance from normal centred on true variance
+      # SD --> chi-squared approximation for sample variance
+      # max(..., 1e-6) so never gets negative 
+      # max(C_ik-1, 1) so its not diveded by zero when only 1 correct response
+      
+      C_p[i, k]   <- C_ik
+    }
+  }
+  ez <- ez_point_estimates(C_p, J_p, MRT_p, VRT_p, I_pilot, K)
+  derive_priors(ez) # runs earlier function on those estimates
+}
+
+
+
+## simulation and Stan fit
+## function takes one set (I, J, priors), simulates dataset from true parameters, fits stan model and returns results
+run_one <- function(I, J_per, true, model, priors,
+                    rhat_threshold     = 1.05,
+                    hopeless_threshold = 10,
+                    iter1 = 1000, warmup1 = 300,
+                    iter2 = 3000, warmup2 = 1000) {
+  # I: number of ppns
+  # J_per: trials per ppn per cond
+  # true: "true parameter" list
+  # model: stan model 
+  # priors: already computed prior hyperparameters for this J value
+  # rhat_threshold: if any Rhat exceeds this it triggers a longer refit 
+  # hopeless_threshold: if Rhat exceeds 10 the fit is seen as degenerate and excluded
+  # iter1 and warmup1: iterations and warmup for first run
+  # iter2 and warmup2: iterations and warmup for second run if first didnt converge
+  
+  
+  K          <- 2
+  cond_dummy <- c(0, 1)
+  prs <- priors #rename
+  
+  x      <- rnorm(I, 0, 1)
+  true_v <- rnorm(I, 0, true$sigma_v)
+  # draw ppns covariate values and random slopes
+  # --> "true" individual differences 
+  
+  
+  X_nu    <- array(NA_real_, dim = c(I, K, 3))
+  X_alpha <- array(NA_real_, dim = c(I, K, 2))
+  X_tau   <- array(NA_real_, dim = c(I, K, 2))
+  # 3 empty arrays (I × K × predictors) --> design matrices mit 3 and 2 dimensions --> tell stan what predictors each ppn in each cond has
+  
+  
+  for (i in seq_len(I)) { # for ppn i
+    for (k in seq_len(K)) { # in cond k
+      X_nu[i, k, ]    <- c(1, x[i], cond_dummy[k]) 
+      # nu predictor row is [1, x_i, cond_dummy_k]: 1 (intercept), covariate value, 0 or 1 depending on cond
+      # stan multiplies row vector by [beta_nu[1], beta_nu[2], beta_nu[3]] --> we get the linear predictor for this cell
+      X_alpha[i, k, ] <- c(1, cond_dummy[k])
+      X_tau[i, k, ]   <- c(1, cond_dummy[k])
+      # alpha and tau only have intercept + condition dummy 
+    }
+  }
+  # true parameter generation
+  # same as pilot above but this time different participants (the "actual" ones)
+  alpha_true <- matrix(NA_real_, I, K)
+  nu_true    <- matrix(NA_real_, I, K)
+  tau_true   <- matrix(NA_real_, I, K)
+  # again 3 empty arrays
+  
+  for (i in seq_len(I)) { # for ppn i
+    for (k in seq_len(K)) { # in cond k 
+      mean_nu_ik    <- true$mu_nu + true$b1_nu * x[i] + true$b2_nu * cond_dummy[k]
+      # again log-scale mean for participant i in condition k
+      
+      mean_alpha_ik <- true$mu_alpha + (true$b_alpha + true_v[i]) * cond_dummy[k]
+      # again boundary sep mean per person per cond
+      
+      mean_tau_ik   <- true$mu_tau + true$b_tau * cond_dummy[k]
+      # and again NDT mean per ppn per cond 
+      
+      repeat { a <- rnorm(1, mean_alpha_ik, true$sigma_alpha)
+               if (a > 0.1 && a < 3.0) { alpha_true[i, k] <- a; break } }
+      # again draw alpha from normal dist --> repeat until valid for alpha 
+      
+      nu_true[i, k] <- exp(rnorm(1, mean_nu_ik, true$sigma_nu))
+      # draw nu and again bc its exponentiated we dont need to repeat 
+      
+      repeat { t <- rnorm(1, mean_tau_ik, true$sigma_tau)
+               if (t > 0.05) { tau_true[i, k] <- t; break } }
+      # again also draw tau and repeat until valid 
+    }
+  }
+  
+  J_mat   <- matrix(J_per, I, K) # same as before: J_mat is filled with J_per (same number of trials for everyone)
+  C_mat   <- matrix(NA_integer_, I, K) # and these are placeholder matrices again
+  MRT_mat <- matrix(NA_real_,    I, K)
+  VRT_mat <- matrix(NA_real_,    I, K)
+  
+  for (i in seq_len(I)) { # for ppn i
+    for (k in seq_len(K)) { # in cond k
+      # retrieve the true parameters for this cell, call them: a = boundary sep, v = drift, tau = NDT
+      a <- alpha_true[i, k]; v <- nu_true[i, k]; tau <- tau_true[i, k]
+      e      <- exp(-a * v) # when drift and boundary sep are large, a*v is large, e is near 0, when small, e is near 1
+      pi_c   <- 1 / (1 + e) # predicted proportion correct from EZ
+      
+      mu_rt  <- tau + (a / (2 * v)) * ((1 - e) / (1 + e)) # predicted mean RT of correct responses
+      # NDT + average time accumulator takes to hit correct boundary
+      
+      sig2rt <- (a / (2 * v^3)) * ((1 - 2*a*v*e - e^2) / (1 + e)^2) # predicted RT variance 
+      # gets larger when drift is slow 
+      
+      # parameters are generated, now observed data generation
+      # same as before, generate observed correct trials, mean RTs, RT variances from the true parameters
+      C_ik <- rbinom(1, J_per, pi_c)
+      C_ik <- max(1L, min(C_ik, J_per - 1L))
+      # again draw observed number of correct responses from binomial dist, J_per trials, each with probability pi_c
+      # again [1, J_per−1]to not allow 0 or all correct because then the formulas break
+      
+      MRT_mat[i, k] <- rnorm(1, mu_rt, sqrt(sig2rt / C_ik)) # as before
+      VRT_mat[i, k] <- max(rnorm(1, sig2rt, sqrt(2 * sig2rt^2 / max(C_ik-1,1))), 1e-6) # as before
+      C_mat[i, k]   <- C_ik # as before 
+    }
+  }
+  
+  
+  stan_data <- list(
+    I = I, K = K,
+    P_nu = 3L, P_alpha = 2L, P_tau = 2L,
+    J = J_mat, C = C_mat, MRT = MRT_mat, VRT = VRT_mat,
+    X_nu = X_nu, X_alpha = X_alpha, X_tau = X_tau,
+    prior_beta_nu     = prs$beta_nu,
+    prior_beta_alpha  = prs$beta_alpha,
+    prior_beta_tau    = prs$beta_tau,
+    prior_sigma_nu    = prs$sigma_nu,
+    prior_sigma_alpha = prs$sigma_alpha,
+    prior_sigma_tau   = prs$sigma_tau,
+    prior_sigma_v     = prs$sigma_v
+  )
+  # pack everything into list for Stan
+  # dimensions, observed data matrices, design matrices, prior hyperparameters
+  # "L" means its integers not floating numbers --> because of stan being bitchy otherwise if we only write e.g., 3
+  
+  
+  
+  group_pars <- c(
+    paste0("beta_nu[",    seq_len(3), "]"),
+    paste0("beta_alpha[", seq_len(2), "]"),
+    paste0("beta_tau[",   seq_len(2), "]"),
+    "sigma_nu", "sigma_alpha", "sigma_tau", "sigma_v"
+  )
+  # character vector of the parameter names stan uses for the group-level parameters
+  # paste0("beta_nu[", 1:3, "]") --> gets us c("beta_nu[1]", "beta_nu[2]", "beta_nu[3]")
+  # to extract Rhat values from stan summary later
+  
+
+  
+
+  hopeless <- function(fit) {
+    rh <- tryCatch(summary(fit)$summary[group_pars, "Rhat"], error = function(e) NA_real_)
+    any(is.na(rh)) || any(is.nan(rh)) || any(is.infinite(rh)) ||
+      any(rh > hopeless_threshold, na.rm = TRUE)
+  }
+  # helper function for hopeless cases 
+  # tryCatch runs what is inside of it and catches errors and then returns NA
+  # extracts Rhats and returns TRUE if values are missing, NaN, infinite, or above 10 
+  # then they are broken 
+  
+  
+  fit <- tryCatch(
+    sampling(model, data = stan_data,
+             iter = iter1, warmup = warmup1, chains = 4, cores = 1, refresh = 0,
+             control = list(adapt_delta = 0.85, max_treedepth = 10)),
+    error = function(e) NULL
+  )
+  # drawing MCMC samples with sampling rstan function
+  # runs 4 independent chains 
+  # refresh = 0 supresses stans progress output
+  # adapt_delta --> step size (higher --> more careful --> slower)
+  # max_treedepth --> how deep goes sampler tree
+  # when stan crashes --> tryCatch catches error and returns NULL so it doesnt crash
+  
+  if (is.null(fit))  return(list(status = "error"))
+  if (hopeless(fit)) return(list(status = "excluded", reason = "degenerate_fit1"))
+  # if stan crashes --> this error is returned
+  # if fit has Rhat > 10 this exclusion message is returned
+  # return() exits function directly and gives out message
+  
+  
+  rhat_max  <- max(summary(fit)$summary[group_pars, "Rhat"], na.rm = TRUE)
+  converged <- "first_fit"
+  if (rhat_max > rhat_threshold) {
+    # extract the worst Rhat of group-level parameters
+    # if > 1.05 --> fit hasn't converged well enough 
+    # --> has to rerun with more iterations
+    # shows this message in console so I know
+    message(sprintf("Refit triggered (I=%d, J=%d) — Rhat = %.2f", I, J_per, rhat_max))
+    
+    
+    fit <- tryCatch(
+      sampling(model, data = stan_data,
+               iter = iter2, warmup = warmup2, chains = 4, cores = 1, refresh = 0,
+               control = list(adapt_delta = 0.95, max_treedepth = 12)),
+      error = function(e) NULL
+    )
+    # refit with iter2 = 3000 warmup2 = 1000 and adapt_delta = 0.95 and max_treedepth = 12
+    # stricter 
+    
+    if (is.null(fit))  return(list(status = "error")) # check again like before
+    if (hopeless(fit)) return(list(status = "excluded", reason = "degenerate_refit"))
+    rhat_max  <- max(summary(fit)$summary[group_pars, "Rhat"], na.rm = TRUE) # also Rhats
+    converged <- "refit"
+    if (rhat_max > rhat_threshold)
+      return(list(status = "excluded", reason = "non_converged"))
+  }
+  # if it still does not converge --> exclude
+  
+  
+  s <- summary(fit)$summary
+  # summary matrix --> 1 row per parameter (columns for mean, SD, quantiles, Rhat, n_eff)
+  
+  
+  group_results <- data.frame(
+    # for plotting results later --> data frame table,  one row per group-level parameter
+    # row has I and J of this run, parameter name, true value, posterior mean estimate and the used prior 
+    # aggregated across all simulation runs 
+    I = I, J = J_per,
+    param = c("mu_nu", "b1_nu", "b2_nu",
+              "mu_alpha", "b_alpha",
+              "mu_tau", "b_tau",
+              "sigma_nu", "sigma_alpha", "sigma_tau", "sigma_v"),
+    true_val = c(true$mu_nu,    true$b1_nu,    true$b2_nu,
+                 true$mu_alpha, true$b_alpha,
+                 true$mu_tau,   true$b_tau,
+                 true$sigma_nu, true$sigma_alpha, true$sigma_tau, true$sigma_v),
+    estimate = c(
+      s["beta_nu[1]",    "mean"], s["beta_nu[2]",    "mean"], s["beta_nu[3]",  "mean"],
+      s["beta_alpha[1]", "mean"], s["beta_alpha[2]", "mean"],
+      s["beta_tau[1]",   "mean"], s["beta_tau[2]",   "mean"],
+      s["sigma_nu",      "mean"], s["sigma_alpha",   "mean"],
+      s["sigma_tau",     "mean"], s["sigma_v",       "mean"]
+    ),
+    prior_mean = c(
+      prs$beta_nu[1,1],    prs$beta_nu[1,2],    prs$beta_nu[1,3],
+      prs$beta_alpha[1,1], prs$beta_alpha[1,2],
+      prs$beta_tau[1,1],   prs$beta_tau[1,2],
+      prs$sigma_nu[1], prs$sigma_alpha[1], prs$sigma_tau[1], prs$sigma_v[1]
+    ),
+    prior_sd = c(
+      prs$beta_nu[2,1],    prs$beta_nu[2,2],    prs$beta_nu[2,3],
+      prs$beta_alpha[2,1], prs$beta_alpha[2,2],
+      prs$beta_tau[2,1],   prs$beta_tau[2,2],
+      prs$sigma_nu[2], prs$sigma_alpha[2], prs$sigma_tau[2], prs$sigma_v[2]
+    ),
+    converged = converged,
+    rhat_max  = rhat_max,
+    stringsAsFactors = FALSE
+  )
+ 
+  
+  
+  
+  v_results <- data.frame(
+    I = I, J = J_per,
+    participant = seq_len(I),
+    true_v = true_v,
+    est_v  = s[paste0("v[", seq_len(I), "]"), "mean"]
+  )
+  # 1 row per participant with their true random slope and estimated random slope
+  # paste0("v[", 1:I, "]") --> generates stan parameter names v[1], ... v[I]
+  
+  alpha_est <- matrix(NA_real_, I, K)
+  nu_est    <- matrix(NA_real_, I, K)
+  tau_est   <- matrix(NA_real_, I, K)
+  # posterior mean estimates from stan --> estimation for each value
+  # empty matrices with row length I and column length K to fill with estimated alpha, nu and tau 
+  # mirroring alpha_true, nu_true, tau_true
+  
+  for (i in seq_len(I)) { # for ppn i
+    for (k in seq_len(K)) { # in cond k
+      alpha_est[i, k] <- s[paste0("alpha[", i, ",", k, "]"), "mean"] 
+      nu_est[i, k]    <- s[paste0("nu[",    i, ",", k, "]"), "mean"]
+      tau_est[i, k]   <- s[paste0("tau[",   i, ",", k, "]"), "mean"]
+      # s = stan summary matrix from before  with 1 row per parameter
+      # individual parameters are then called alpha[1,1], alpha[1,2], alpha[2,1] etc
+      # paste0("alpha[", i, ",", k, "]") makes this exact thing --> so for i=3, k=2 its alpha[3,2]
+      # the mean column extracts the posterior mean for this ppn in this condition
+      # whole result is stored in alpha_est[i, k]
+      # same for the tau and nu
+    }
+  }
+  
+  indiv_results <- data.frame(
+    #  individual results data frame
+    I = I, J = J_per,
+    # every row gets the I and row of its run
+    condition  = rep(seq_len(K), each = I), # condition column
+    # seq_len(K) --> c(1, 2)
+    # rep(..., each = I) repeats every value I times so --> c(1,1,...,1, 2,2,...,2)
+    # as.vector() on a matrix reads column by column --> so the first I rows correspond to cond 1 and the next I rows to cond 2
+    
+    true_alpha = as.vector(alpha_true), est_alpha = as.vector(alpha_est),
+    true_nu    = as.vector(nu_true),    est_nu    = as.vector(nu_est),
+    true_tau   = as.vector(tau_true),   est_tau   = as.vector(tau_est)
+    # as.vector() makes the I*K matrix into a vector of length I*K that first rerads column 1 and  then column 2
+    # true_alpha next to est_alpha in data frame --> every row has true value and estimate for the same cell (ppn + cond)
+    # need this to plot individual results later
+  )
+    # data frame has I*K rows per simulation run, one for each combination of participant and condition, and columns for the simulation design     (I, J), which condition it was, and the true and estimated value of each parameter
+  list(status = "ok", group = group_results, v = v_results, indiv = indiv_results,
+       priors_used = prs, rhat_max = rhat_max, converged = converged)
+  # status = ok is later for checking successful runs and bad ones
+  
+}
+
+
+## compile Stan model
+cache_file <- paste0(tools::file_path_sans_ext(
+  "corrected_model_w_cond_and_random_slope.stan"), ".rds")
+if (file.exists(cache_file)) file.remove(cache_file)
+# forces a fresh recompile --> not using old compiled version if edited 
+
+## derive priors once per J value 
+set.seed(42) # reproducible
+priors_by_J <- setNames( 
+  lapply(J_vals, function(j) derive_priors_from_pilot(j, true, I_pilot = 20)), 
+  # applies function to each element of J_vals --> returns list with 3 results
+  as.character(J_vals) # names the list elements "20", etc so they can be looked up again
+)
+# priors_by_J[["20"]], priors_by_J[["60"]] and priors_by_J[["160"]] each contains set of prior hyperparameters that are derived from 20 participants at that J
+
+
+
+## parallel simulation
+jobs      <- expand.grid(I = I_vals, J = J_vals, sim = seq_len(N_sim))
+# expand.grid creates 3 I values × 3 J values × 60 simulations = data frame with 540 rows --> one per job
+
+jobs_list <- split(jobs, seq_len(nrow(jobs)))
+## splits data frame into a list of one-row data frames, each worker gets one element of list
+
+cl <- makeCluster(detectCores() - 1)
+## makes cluster of worker processes --> detectCores() --> how many CPU cores --> uses all besides one
+
+clusterSetRNGStream(cl, 42)
+## parallel safe random number streams for all workers, seeded 
+## otherwise all workers would use the same random numbers
+
+clusterExport(cl, varlist = c("run_one", "derive_priors_from_pilot",
+                              "ez_point_estimates", "derive_priors",
+                              "true", "priors_by_J"))
+# sends objects from session to every worker
+# workers = separate processes with empty environments without knowledge from session 
+
+
+clusterEvalQ(cl, {
+  library(rstan)
+  library(dplyr)
+  rstan_options(auto_write = FALSE)
+  options(mc.cores = 1)
+  ez_cond <<- stan_model("corrected_model_w_cond_and_random_slope.stan")
+})
+## each worker loads stan, compiles model into ez_cond, and sets mc.cores = 1 so stan doesn't use multiple cores from within a worker
+## "<<-" assigns to the global environment of the worker 
+
+
+
+results_list <- parLapply(cl, jobs_list, function(row) {
+  run_one(I      = row$I,
+          J_per  = row$J,
+          true   = true,
+          model  = ez_cond,
+          priors = priors_by_J[[as.character(row$J)]])
+})
+# parallel lappply 
+# distribute jobs across workers, each calls run_one function with  I, J, and priors and returns list of results
+
+
+stopCluster(cl)
+# shut down the worker processes in the end 
+
+saveRDS(results_list, file = "output/simulation_results.rds")
+# save results 
+
+
+
+
+
+
+## plotting
+
+# gather results
+ok_idx        <- sapply(results_list, function(r) !is.null(r) && r$status == "ok")
+# create vector of TRUE (run succeeded) or FALSE
+# !is.null(r) guard against NULL (worker crash)
+# r$status == "ok" checks whether run has the status ok or not
+
+ok_results    <- results_list[ok_idx]
+results_group <- bind_rows(lapply(ok_results, `[[`, "group"))
+# only the successful runs
+# lapply(..., "[[", "group") extracts group data frame from each result --> stacks all data frames vertically into one big data frame --> one row per parameter per simulation run
+
+results_v     <- bind_rows(lapply(ok_results, `[[`, "v")) # same here and 
+results_indiv <- bind_rows(lapply(ok_results, `[[`, "indiv")) # here
+
+# exclusion report
+# counts how many runs fall into each category --> sum() count of TRUE
+n_total    <- length(results_list)
+n_ok       <- sum(ok_idx)
+n_excluded <- sum(sapply(results_list, function(r) !is.null(r) && r$status == "excluded"))
+n_error    <- sum(sapply(results_list, function(r) is.null(r)  || r$status == "error"))
+print(data.frame(
+  Total = n_total, Converged = n_ok, Excluded = n_excluded, Error = n_error,
+  `Excluded (%)` = round(100 * n_excluded / n_total, 1), check.names = FALSE
+))
+
+
+# exclusion breakdown by cell
+status_df <- bind_rows(lapply(seq_along(results_list), function(i) {
+  r <- results_list[[i]]; row <- jobs[i, ]
+  data.frame(I = row$I, J = row$J, sim = row$sim,
+             status = if (is.null(r)) "error" else r$status,
+             reason = if (is.null(r) || r$status == "ok") NA else r$reason)
+}))
+
+
+status_df %>%
+  group_by(I, J) %>%
+  summarise(n        = n(),
+            excluded = sum(status == "excluded"),
+            pct      = round(100 * excluded / n, 1),
+            reasons  = paste(table(reason[status == "excluded"]), collapse = ", "),
+            .groups  = "drop") %>%
+  print(n = Inf)
+# summarises separately for each I×J combination, n() counts rows in the group --> table exclusion rates per cell
+
+
+
+# factor labels for plots
+add_labels <- function(df) {
+  df %>% mutate(
+    I_label = factor(paste0("I = ", I), levels = paste0("I = ", I_vals)),
+    J_label = factor(paste0("J = ", J), levels = paste0("J = ", J_vals))
+  )
+}
+results_group <- add_labels(results_group)
+results_v     <- add_labels(results_v)
+results_indiv <- results_indiv %>%
+  add_labels() %>%
+  mutate(condition = factor(condition, labels = c("Condition 1 (k=1)", "Condition 2 (k=2)")))
+
+# theme for plots
+dark_theme <- theme_minimal(base_size = 12) +
+  theme(
+    plot.background   = element_rect(fill = "#1e1e1e", colour = NA),
+    panel.background  = element_rect(fill = "#1e1e1e", colour = NA),
+    panel.grid.major  = element_line(colour = "#333333"),
+    panel.grid.minor  = element_blank(),
+    text              = element_text(colour = "white"),
+    axis.text         = element_text(colour = "white"),
+    strip.text        = element_text(colour = "white"),
+    legend.background = element_rect(fill = "#1e1e1e"),
+    legend.text       = element_text(colour = "white")
+  )
+save_plot <- function(plot, filename, width = 8, height = 6) {
+  ggsave(file.path("output1", filename), plot, width = width, height = height,
+         dpi = 300, bg = "#1e1e1e")
+}
+
+# group-level bias plots
+plot_group_bias <- function(param_name, label) {
+  df <- results_group %>%
+    filter(param == param_name) %>%
+    mutate(bias = estimate - true_val)
+  ggplot(df, aes(x = J_label, y = bias)) +
+    geom_hline(yintercept = 0, linetype = "dashed", colour = "white", linewidth = 0.5) +
+    geom_violin(fill = "goldenrod", colour = NA, alpha = 0.35, trim = TRUE, scale = "width") +
+    geom_jitter(colour = "goldenrod", alpha = 0.7, size = 1.4, width = 0.08) +
+    stat_summary(fun = mean, geom = "crossbar", colour = "white",
+                 linewidth = 0.6, width = 0.4, fatten = 1) +
+    facet_grid(I_label ~ .) +
+    labs(title = label, x = "Trials per condition", y = "Bias (estimate − true)") +
+    dark_theme
+}
+p_mu_nu    <- plot_group_bias("mu_nu",    expression(mu^(nu)~"(log scale intercept)"))
+p_mu_alpha <- plot_group_bias("mu_alpha", expression(mu^(alpha)))
+p_mu_tau   <- plot_group_bias("mu_tau",   expression(mu^(tau)))
+p_b1_nu    <- plot_group_bias("b1_nu",    expression(beta[1]^(nu)~"(log scale covariate)"))
+p_b2_nu    <- plot_group_bias("b2_nu",    expression(beta[2]^(nu)~"(log scale condition)"))
+p_b_alpha  <- plot_group_bias("b_alpha",  expression(beta^(alpha)~"(avg condition effect)"))
+p_b_tau    <- plot_group_bias("b_tau",    expression(beta^(tau)~"(condition)"))
+p_sigma_v  <- plot_group_bias("sigma_v",  expression(sigma[v]~"(random slope SD)"))
+for (p in list(p_mu_nu, p_mu_alpha, p_mu_tau,
+               p_b1_nu, p_b2_nu, p_b_alpha, p_b_tau, p_sigma_v)) print(p)
+save_plot(p_mu_nu,    "bias_mu_nu.png");    save_plot(p_mu_alpha, "bias_mu_alpha.png")
+save_plot(p_mu_tau,   "bias_mu_tau.png");   save_plot(p_b1_nu,    "bias_b1_nu.png")
+save_plot(p_b2_nu,    "bias_b2_nu.png");    save_plot(p_b_alpha,  "bias_b_alpha.png")
+save_plot(p_b_tau,    "bias_b_tau.png");    save_plot(p_sigma_v,  "bias_sigma_v.png")
+
+# individual-level recovery plots
+plot_indiv_recovery <- function(true_col, est_col, label) {
+  ggplot(results_indiv, aes_string(x = true_col, y = est_col, colour = "condition")) +
+    geom_abline(intercept = 0, slope = 1,
+                linetype = "dashed", colour = "white", linewidth = 0.5) +
+    geom_point(alpha = 0.35, size = 0.9) +
+    scale_colour_manual(values = c("Condition 1 (k=1)" = "goldenrod",
+                                   "Condition 2 (k=2)" = "steelblue")) +
+    facet_grid(I_label ~ J_label) +
+    labs(title = label, x = paste("True", label), y = paste("Estimated", label),
+         colour = "Condition") +
+    dark_theme + theme(legend.position = "bottom")
+}
+p_indiv_alpha <- plot_indiv_recovery("true_alpha", "est_alpha", expression(alpha[ik]))
+p_indiv_nu    <- plot_indiv_recovery("true_nu",    "est_nu",    expression(nu[ik]))
+p_indiv_tau   <- plot_indiv_recovery("true_tau",   "est_tau",   expression(tau[ik]))
+for (p in list(p_indiv_alpha, p_indiv_nu, p_indiv_tau)) print(p)
+save_plot(p_indiv_alpha, "recovery_alpha.png", width = 10, height = 8)
+save_plot(p_indiv_nu,    "recovery_nu.png",    width = 10, height = 8)
+save_plot(p_indiv_tau,   "recovery_tau.png",   width = 10, height = 8)
+
+# random slope recovery plot
+p_v_recovery <- ggplot(results_v, aes(x = true_v, y = est_v)) +
+  geom_abline(intercept = 0, slope = 1,
+              linetype = "dashed", colour = "white", linewidth = 0.5) +
+  geom_point(colour = "goldenrod", alpha = 0.4, size = 1.2) +
+  facet_grid(I_label ~ J_label) +
+  labs(title = expression("Recovery of by-participant random slopes " * v[i]),
+       x = "True v", y = "Estimated v") +
+  dark_theme
+print(p_v_recovery)
+save_plot(p_v_recovery, "recovery_v.png", width = 10, height = 8)
+
+# prior summary table
+prior_summary <- results_group %>%
+  group_by(param, I, J) %>%
+  summarise(`Prior mean (avg)` = round(mean(prior_mean, na.rm = TRUE), 3),
+            `Prior SD (avg)`   = round(mean(prior_sd,   na.rm = TRUE), 3),
+            .groups = "drop") %>%
+  rename(Parameter = param)
+write.csv(prior_summary, file.path("output", "prior_summary.csv"), row.names = FALSE)
+kable(prior_summary,
+      caption = "average derived prior hyperparameters across simulations,
+                 by parameter, number of participants, and trials per condition.")
+```
+
+```{r back to normals and different parameters and safeguarded sigma_rt^2}
+# check for correct stan file!!
+library(rstan)
+library(bayesplot)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(parallel)
+
+rstan_options(auto_write = TRUE)
+# save compiled Stan model automatically
+# compilation is slow --> need to do it only once and is reused on future runs
+
+options(mc.cores = 1)
+# use 1 CPU core per chain, overrode later when we do parallel mode
+# --> each worker runs on 1 core --> no problem with shared cores
+
+if (!dir.exists("output_new")) dir.create("output_new")
+# make output folder or store in that folder if already there
+
+## simulation grid
+I_vals <- c(40, 160) # number of participants to test
+J_vals <- c(40, 160) # trials per participant per condition to test
+N_sim  <- 5 # independent simulation replications per I×J combination
+K      <- 2 # how many conditions
+# 3x3x30 = 270 simulations
+
+## true parameters, simulation generates data from this
+# can they be recovered from data?
+# stan only retrieves data generated from them
+true <- list(
+  mu_nu    = 0.4, # mean/intercept for drift 
+  b1_nu    = 0.1, # how much the covariate shifts drift in cond 1 
+  b2_nu    = 0.3, # difference cond 2 to cond 1 
+  mu_alpha = 1.5, # average boundary separation in condition 1
+  b_alpha  = 0.2, # condition 2 boundary is on average 0.2 wider
+  mu_tau   = 0.3, # average non-decision time in condition 1 (in seconds)
+  b_tau    = 0.25,   # condition 2 NDT is 0.25 seconds longer
+  sigma_nu    = 0.3, # how much individuals vary in drift (SD, raw scale)
+  sigma_alpha = 0.25, # how much individuals vary in boundary (SD)
+  sigma_tau   = 0.15, # how much individuals vary in NDT (SD)
+  sigma_v     = 0.2 # how much individuals vary in cond effect on boundary sep (SD of random slope)
+)
+
+## function takes observed data (how many correct, trials, mean RTs, RT variances) and computes point estimates of nu, alpha and tau
+# using the EZ equations
+# used only in "pilot" to derive priors
+ez_point_estimates <- function(C_arr, J_arr, MRT_mat, VRT_mat, I, K) {
+# inputs:
+# C_arr: matrix of correct responses, I rows × K columns
+# J_arr: matrix of trials (same)
+# MRT_mat: matrix of mean RTs of correct responses
+# VRT_mat: matrix of RT variances
+# I: number of participants
+# K: number of conditions
+  nu_hat    <- matrix(NA, I, K)
+  alpha_hat <- matrix(NA, I, K)
+  tau_hat   <- matrix(NA, I, K)
+  # three empty I×K matrices
+
+  for (i in seq_len(I)) { # for each participant (seq_len(I) safer than 1:I)
+    for (k in seq_len(K)) { # in each condition
+
+      Pc  <- C_arr[i, k] / J_arr[i, k] # proportion correct for participant i in condition k (correct responses divided by total trials)
+
+      Pc  <- max(min(Pc, 1 - 1 / (2 * J_arr[i, k])), 1 / (2 * J_arr[i, k])) # Pc away from exactly 0 or 1 bc the EZ equations break down at         exact accuracy = 1 or 0 bc log of 0 is undefined) --> took smallest proportion possible that was not zero with J trials (1/(2*J))
+
+      mrt <- MRT_mat[i, k] # mrt is matrix of i and k for mean of correct responses
+      vrt <- VRT_mat[i, k] # vrt same for variance
+
+      if (is.na(mrt) || is.na(vrt) || vrt <= 0) next # skip cell if mean RT or variance is NA or variance is zero or negative (bc then we           cannot compute the estimates)
+
+      L   <- log(Pc / (1 - Pc)) # logit transformation so the log-odds of being correct
+      # boundary × drift, alpha = L / nu
+      # e.g.,  Pc = 0.8 --> L = log(0.8/0.2) = log(4) so about 1.39
+
+
+      nu4 <- L * (Pc^2 * L - Pc * L + Pc - 0.5) / vrt
+      # getting v(hoch 4) from the EZ inversion formulas
+      # rearrange EZ RT variance equation to isolate nu
+      # nu^4 = L × (Pc^2 × L − Pc × L + Pc − 0.5) / VRT --> solve for nu
+      # alpha  = L / nu --> get alpha
+      # tau  = MRT − (alpha / 2xnu) × (2Pc − 1) --> get tau
+
+      if (is.na(nu4) || nu4 <= 0) next # skip if  nu4 is negative or missing
+
+      nu_hat[i, k]    <- sign(Pc - 0.5) * nu4^(1/4)
+      # drift rate estimate
+      # sign(Pc - 0.5) is +1 if accuracy > 50% (positive drift toward correct boundary) and −1 otherwise
+      # sign returns 1 for positive values, -1 for negative values, and 0 for zero
+
+      alpha_hat[i, k] <- L / nu_hat[i, k]
+      # boundary sep estimate from EZ --> boundary = log-odds / drift rate
+
+      tau_hat[i, k]   <- mrt - (alpha_hat[i, k] / (2 * nu_hat[i, k])) * (2 * Pc - 1)
+      # NDT estimate -->  mean RT - decision time component ((alpha_hat[i, k] / (2 * nu_hat[i, k])) * (2 * Pc - 1)) = NDT
+    }
+  }
+  list(nu = nu_hat, alpha = alpha_hat, tau = tau_hat) # put all three matrices into list
+}
+
+
+
+
+## function takes EZ estimates from pilot data and turns them into prior hyperparameters (that we put into stan then)
+derive_priors <- function(ez) { # the input is "ez" so the list returned by by "ez_point_estimates"
+
+  nu_vals    <- as.vector(ez$nu[!is.na(ez$nu)])
+  # nu_vals = vector of all valid drift estimates (no positivity filter: negative nu is valid)
+  # ez$nu = I×K matrix but as single vector
+
+  alpha_vals <- as.vector(ez$alpha[!is.na(ez$alpha) & ez$alpha > 0])
+  # same for boundary sep
+
+  tau_vals   <- as.vector(ez$tau[!is.na(ez$tau) & ez$tau > 0.05])
+  # and for NDT but here its above 0.05 and not only positive
+
+  # nu is now on the raw scale (no log transform)
+  nu_sd    <- min(max(sd(nu_vals), 0.3), 1.5)
+  # compute SD of nu across participants and conditions in pilot data
+  # ensure its above 0.3 and maximum 1.5 --> robustness for pilot
+
+  alpha_sd <- min(max(sd(alpha_vals),  0.2), 1.0)
+  # same here but with diff values
+  tau_sd   <- min(max(sd(tau_vals),    0.1), 0.5)
+
+  list(
+    beta_nu    = matrix(c(mean(nu_vals), 0,       0,
+                          nu_sd,         nu_sd,   nu_sd),
+                        nrow = 2, byrow = TRUE),
+    # 2×3 matrix
+    # row 1 = prior means for [intercept, covariate slope, condition slope] of nu
+    # row 2 = prior SDs
+    # intercept has mean(nu_vals) as prior mean so it is centred on what the pilot data says (raw scale)
+    # slopes have 0 bc we dont know direction
+    # byrow = TRUE fills matrix row by row
+
+    beta_alpha = matrix(c(mean(alpha_vals), 0,
+                          alpha_sd * 2,     alpha_sd * 2),
+                        nrow = 2, byrow = TRUE),
+    # for alpha its 2x2 and for tau too
+    beta_tau   = matrix(c(mean(tau_vals),   0,
+                          tau_sd * 2,       tau_sd * 2),
+                        nrow = 2, byrow = TRUE),
+
+    sigma_nu    = c(nu_sd,    nu_sd / 2), # prior for population SD of drift = normal dist with mean = nu_sd and SD = nu_sd/2
+    sigma_alpha = c(alpha_sd, alpha_sd / 2),
+    sigma_tau   = c(tau_sd,   tau_sd / 2),
+    sigma_v     = c(nu_sd * 0.3, nu_sd) # random slope variability --> nu_sd * 0.3 and nu_sd --> much uncertainty, wide prior
+  )
+}
+
+## function derives the priors from pilot aka
+# that simulates separate set of pilot participants, generates data from the true parameters, and runs EZ formulas on them and then calls the function derive_priors to get the prior hyperparameters
+derive_priors_from_pilot <- function(J_per, true, I_pilot = 20) {
+  # J_per = trials per condition in the pilot, true = true parameters, I_pilot = how many pilot participants so 20
+  K          <- 2
+  cond_dummy <- c(0, 1)
+  # cond 1 --> dummy variable 0 (reference)
+  # cond 2 --> 1 (treatment)
+  # multiplied by condition effect -->effect is zero for cond 1 and there is effect for cond 2
+
+  x_p      <- rnorm(I_pilot, 0, 1)
+  true_v_p <- rnorm(I_pilot, 0, true$sigma_v)
+  # draw pilot ppns covariate values (x_p) from standard normal
+  # draw pilot ppns random slope values (true_v_p) from Normal(0, sigma_v)
+  # each ppn has own x and v
+
+  # empty data matrices for the pilot participants --> filled by simulation
+  J_p   <- matrix(J_per, I_pilot, K) # every cell is filled with J_per --> e.g., if J_per = 80 and I_pilot = 20, this is a 20×2 matrix of 80s
+  C_p   <- matrix(NA_integer_, I_pilot, K) # placeholder I_pilot × K matrix for integers (how many correct)
+  MRT_p <- matrix(NA_real_,    I_pilot, K) # same but real number because MRT
+  VRT_p <- matrix(NA_real_,    I_pilot, K) # same bc VRT
+
+
+  for (i in seq_len(I_pilot)) { # for ppn i
+    for (k in seq_len(K)) { # in cond k
+      mean_nu_ik    <- true$mu_nu + true$b1_nu * x_p[i] + true$b2_nu * cond_dummy[k]
+      # computes raw-scale mean for participant i in condition k
+      # = intercept + covariate effect * x + condition effect * dummy
+      # for cond 1 (dummy = 0) condition effect * dummy is gone (0)
+
+      mean_alpha_ik <- true$mu_alpha + (true$b_alpha + true_v_p[i]) * cond_dummy[k]
+      # boundary sep mean per person per cond
+      # = intercept + (average condition effect + this ppns adjustment) * dummy
+      # again, 0 in cond 1, in cond 2 the ppns own random slope shifts boundary adjustment
+
+      mean_tau_ik   <- true$mu_tau + true$b_tau * cond_dummy[k]
+      # NDT mean per person
+
+      repeat { a <- rnorm(1, mean_alpha_ik, true$sigma_alpha)
+               if (a > 0.1 && a < 3.0) { ap <- a; break } }
+      # repeat loops forever until "break" hits
+      # draw alpha from normal dist and check whether it falls in the valid range, continues until valid draw and saves it (under ap)
+
+      # nu drawn directly from normal on raw scale (negative values are valid: drift toward wrong boundary)
+      np <- rnorm(1, mean_nu_ik, true$sigma_nu)
+
+      repeat { t <- rnorm(1, mean_tau_ik, true$sigma_tau)
+               if (t > 0.05) { tp <- t; break } }
+      # same for tau what we did for alpha
+
+
+      e      <- exp(-ap * np)
+      pi_c   <- 1 / (1 + e)
+      mu_rt  <- tp + (ap / (2 * np)) * ((1 - e) / (1 + e))
+      sig2rt <- (ap / (2 * np^3)) * ((1 - 2*ap*np*e - e^2) / (1 + e)^2)
+      # ez equations
+      # given tau, alpha and nu, predict: e, predicted proportion correct, predicted mean RT for correct ones and predicted variance
+
+      C_ik <- rbinom(1, J_per, pi_c)
+      C_ik <- max(1L, min(C_ik, J_per - 1L))
+      # draw number of correct responses from binomial dist (J_per trials, probability pi_c)
+      # [1, J−1] again to not allow 0 or all correct because EZ formulas break then
+      # 1L = integer 1
+
+
+      MRT_p[i, k] <- rnorm(1, mu_rt, sqrt(sig2rt / C_ik))
+      # draw observed mean RT from normal dist centred on true mean RT
+      # SD is standard error of the mean RT --> gets smaller when more correct trials
+
+      VRT_p[i, k] <- max(rnorm(1, sig2rt, sqrt(2 * sig2rt^2 / max(C_ik-1,1))), 1e-6)
+      # draw observed RT variance from normal centred on true variance
+      # SD --> chi-squared approximation for sample variance
+      # max(..., 1e-6) so never gets negative
+      # max(C_ik-1, 1) so its not diveded by zero when only 1 correct response
+
+      C_p[i, k]   <- C_ik
+    }
+  }
+  ez <- ez_point_estimates(C_p, J_p, MRT_p, VRT_p, I_pilot, K)
+  derive_priors(ez) # runs earlier function on those estimates
+}
+
+
+
+## simulation and Stan fit
+## function takes one set (I, J, priors), simulates dataset from true parameters, fits stan model and returns results
+run_one <- function(I, J_per, true, model, priors,
+                    rhat_threshold     = 1.05,
+                    hopeless_threshold = 10,
+                    iter1 = 1000, warmup1 = 300,
+                    iter2 = 3000, warmup2 = 1000) {
+  # I: number of ppns
+  # J_per: trials per ppn per cond
+  # true: "true parameter" list
+  # model: stan model
+  # priors: already computed prior hyperparameters for this J value
+  # rhat_threshold: if any Rhat exceeds this it triggers a longer refit
+  # hopeless_threshold: if Rhat exceeds 10 the fit is seen as degenerate and excluded
+  # iter1 and warmup1: iterations and warmup for first run
+  # iter2 and warmup2: iterations and warmup for second run if first didnt converge
+
+
+  K          <- 2
+  cond_dummy <- c(0, 1)
+  prs <- priors #rename
+
+  x      <- rnorm(I, 0, 1)
+  true_v <- rnorm(I, 0, true$sigma_v)
+  # draw ppns covariate values and random slopes
+  # --> "true" individual differences
+
+
+  X_nu    <- array(NA_real_, dim = c(I, K, 3))
+  X_alpha <- array(NA_real_, dim = c(I, K, 2))
+  X_tau   <- array(NA_real_, dim = c(I, K, 2))
+  # 3 empty arrays (I × K × predictors) --> design matrices mit 3 and 2 dimensions --> tell stan what predictors each ppn in each cond has
+
+
+  for (i in seq_len(I)) { # for ppn i
+    for (k in seq_len(K)) { # in cond k
+      X_nu[i, k, ]    <- c(1, x[i], cond_dummy[k])
+      # nu predictor row is [1, x_i, cond_dummy_k]: 1 (intercept), covariate value, 0 or 1 depending on cond
+      # stan multiplies row vector by [beta_nu[1], beta_nu[2], beta_nu[3]] --> we get the linear predictor for this cell
+      X_alpha[i, k, ] <- c(1, cond_dummy[k])
+      X_tau[i, k, ]   <- c(1, cond_dummy[k])
+      # alpha and tau only have intercept + condition dummy
+    }
+  }
+  # true parameter generation
+  # same as pilot above but this time different participants (the "actual" ones)
+  alpha_true <- matrix(NA_real_, I, K)
+  nu_true    <- matrix(NA_real_, I, K)
+  tau_true   <- matrix(NA_real_, I, K)
+  # again 3 empty arrays
+
+  for (i in seq_len(I)) { # for ppn i
+    for (k in seq_len(K)) { # in cond k
+      mean_nu_ik    <- true$mu_nu + true$b1_nu * x[i] + true$b2_nu * cond_dummy[k]
+      # raw-scale mean for participant i in condition k
+
+      mean_alpha_ik <- true$mu_alpha + (true$b_alpha + true_v[i]) * cond_dummy[k]
+      # again boundary sep mean per person per cond
+
+      mean_tau_ik   <- true$mu_tau + true$b_tau * cond_dummy[k]
+      # and again NDT mean per ppn per cond
+
+      repeat { a <- rnorm(1, mean_alpha_ik, true$sigma_alpha)
+               if (a > 0.1 && a < 3.0) { alpha_true[i, k] <- a; break } }
+      # again draw alpha from normal dist --> repeat until valid for alpha
+
+      # nu drawn directly from normal on raw scale (no exp(), negative values valid)
+      nu_true[i, k] <- rnorm(1, mean_nu_ik, true$sigma_nu)
+
+      repeat { t <- rnorm(1, mean_tau_ik, true$sigma_tau)
+               if (t > 0.05) { tau_true[i, k] <- t; break } }
+      # again also draw tau and repeat until valid
+    }
+  }
+
+  J_mat   <- matrix(J_per, I, K) # same as before: J_mat is filled with J_per (same number of trials for everyone)
+  C_mat   <- matrix(NA_integer_, I, K) # and these are placeholder matrices again
+  MRT_mat <- matrix(NA_real_,    I, K)
+  VRT_mat <- matrix(NA_real_,    I, K)
+
+  for (i in seq_len(I)) { # for ppn i
+    for (k in seq_len(K)) { # in cond k
+      # retrieve the true parameters for this cell, call them: a = boundary sep, v = drift, tau = NDT
+      a <- alpha_true[i, k]; v <- nu_true[i, k]; tau <- tau_true[i, k]
+      e      <- exp(-a * v) # when drift and boundary sep are large, a*v is large, e is near 0, when small, e is near 1
+      pi_c   <- 1 / (1 + e) # predicted proportion correct from EZ
+
+      mu_rt  <- tau + (a / (2 * v)) * ((1 - e) / (1 + e)) # predicted mean RT of correct responses
+      # NDT + average time accumulator takes to hit correct boundary
+
+      sig2rt <- (a / (2 * v^3)) * ((1 - 2*a*v*e - e^2) / (1 + e)^2) # predicted RT variance
+      # gets larger when drift is slow
+
+      # parameters are generated, now observed data generation
+      # same as before, generate observed correct trials, mean RTs, RT variances from the true parameters
+      C_ik <- rbinom(1, J_per, pi_c)
+      C_ik <- max(1L, min(C_ik, J_per - 1L))
+      # again draw observed number of correct responses from binomial dist, J_per trials, each with probability pi_c
+      # again [1, J_per−1]to not allow 0 or all correct because then the formulas break
+
+      MRT_mat[i, k] <- rnorm(1, mu_rt, sqrt(sig2rt / C_ik)) # as before
+      VRT_mat[i, k] <- max(rnorm(1, sig2rt, sqrt(2 * sig2rt^2 / max(C_ik-1,1))), 1e-6) # as before
+      C_mat[i, k]   <- C_ik # as before
+    }
+  }
+
+
+  stan_data <- list(
+    I = I, K = K,
+    P_nu = 3L, P_alpha = 2L, P_tau = 2L,
+    J = J_mat, C = C_mat, MRT = MRT_mat, VRT = VRT_mat,
+    X_nu = X_nu, X_alpha = X_alpha, X_tau = X_tau,
+    prior_beta_nu     = prs$beta_nu,
+    prior_beta_alpha  = prs$beta_alpha,
+    prior_beta_tau    = prs$beta_tau,
+    prior_sigma_nu    = prs$sigma_nu,
+    prior_sigma_alpha = prs$sigma_alpha,
+    prior_sigma_tau   = prs$sigma_tau,
+    prior_sigma_v     = prs$sigma_v
+  )
+  # pack everything into list for Stan
+  # dimensions, observed data matrices, design matrices, prior hyperparameters
+  # "L" means its integers not floating numbers --> because of stan being bitchy otherwise if we only write e.g., 3
+
+
+
+  group_pars <- c(
+    paste0("beta_nu[",    seq_len(3), "]"),
+    paste0("beta_alpha[", seq_len(2), "]"),
+    paste0("beta_tau[",   seq_len(2), "]"),
+    "sigma_nu", "sigma_alpha", "sigma_tau", "sigma_v"
+  )
+  # character vector of the parameter names stan uses for the group-level parameters
+  # paste0("beta_nu[", 1:3, "]") --> gets us c("beta_nu[1]", "beta_nu[2]", "beta_nu[3]")
+  # to extract Rhat values from stan summary later
+
+
+
+
+  hopeless <- function(fit) {
+    rh <- tryCatch(summary(fit)$summary[group_pars, "Rhat"], error = function(e) NA_real_)
+    any(is.na(rh)) || any(is.nan(rh)) || any(is.infinite(rh)) ||
+      any(rh > hopeless_threshold, na.rm = TRUE)
+  }
+  # helper function for hopeless cases
+  # tryCatch runs what is inside of it and catches errors and then returns NA
+  # extracts Rhats and returns TRUE if values are missing, NaN, infinite, or above 10
+  # then they are broken
+
+
+  fit <- tryCatch(
+    sampling(model, data = stan_data,
+             iter = iter1, warmup = warmup1, chains = 4, cores = 1, refresh = 0,
+             control = list(adapt_delta = 0.85, max_treedepth = 10)),
+    error = function(e) NULL
+  )
+  # drawing MCMC samples with sampling rstan function
+  # runs 4 independent chains
+  # refresh = 0 supresses stans progress output
+  # adapt_delta --> step size (higher --> more careful --> slower)
+  # max_treedepth --> how deep goes sampler tree
+  # when stan crashes --> tryCatch catches error and returns NULL so it doesnt crash
+
+  if (is.null(fit))  return(list(status = "error"))
+  if (hopeless(fit)) return(list(status = "excluded", reason = "degenerate_fit1"))
+  # if stan crashes --> this error is returned
+  # if fit has Rhat > 10 this exclusion message is returned
+  # return() exits function directly and gives out message
+
+
+  rhat_max  <- max(summary(fit)$summary[group_pars, "Rhat"], na.rm = TRUE)
+  converged <- "first_fit"
+  if (rhat_max > rhat_threshold) {
+    # extract the worst Rhat of group-level parameters
+    # if > 1.05 --> fit hasn't converged well enough
+    # --> has to rerun with more iterations
+    # shows this message in console so I know
+    message(sprintf("Refit triggered (I=%d, J=%d) — Rhat = %.2f", I, J_per, rhat_max))
+
+
+    fit <- tryCatch(
+      sampling(model, data = stan_data,
+               iter = iter2, warmup = warmup2, chains = 4, cores = 1, refresh = 0,
+               control = list(adapt_delta = 0.95, max_treedepth = 12)),
+      error = function(e) NULL
+    )
+    # refit with iter2 = 3000 warmup2 = 1000 and adapt_delta = 0.95 and max_treedepth = 12
+    # stricter
+
+    if (is.null(fit))  return(list(status = "error")) # check again like before
+    if (hopeless(fit)) return(list(status = "excluded", reason = "degenerate_refit"))
+    rhat_max  <- max(summary(fit)$summary[group_pars, "Rhat"], na.rm = TRUE) # also Rhats
+    converged <- "refit"
+    if (rhat_max > rhat_threshold)
+      return(list(status = "excluded", reason = "non_converged"))
+  }
+  # if it still does not converge --> exclude
+
+
+  s <- summary(fit)$summary
+  # summary matrix --> 1 row per parameter (columns for mean, SD, quantiles, Rhat, n_eff)
+
+
+  group_results <- data.frame(
+    # for plotting results later --> data frame table,  one row per group-level parameter
+    # row has I and J of this run, parameter name, true value, posterior mean estimate and the used prior
+    # aggregated across all simulation runs
+    I = I, J = J_per,
+    param = c("mu_nu", "b1_nu", "b2_nu",
+              "mu_alpha", "b_alpha",
+              "mu_tau", "b_tau",
+              "sigma_nu", "sigma_alpha", "sigma_tau", "sigma_v"),
+    true_val = c(true$mu_nu,    true$b1_nu,    true$b2_nu,
+                 true$mu_alpha, true$b_alpha,
+                 true$mu_tau,   true$b_tau,
+                 true$sigma_nu, true$sigma_alpha, true$sigma_tau, true$sigma_v),
+    estimate = c(
+      s["beta_nu[1]",    "mean"], s["beta_nu[2]",    "mean"], s["beta_nu[3]",  "mean"],
+      s["beta_alpha[1]", "mean"], s["beta_alpha[2]", "mean"],
+      s["beta_tau[1]",   "mean"], s["beta_tau[2]",   "mean"],
+      s["sigma_nu",      "mean"], s["sigma_alpha",   "mean"],
+      s["sigma_tau",     "mean"], s["sigma_v",       "mean"]
+    ),
+    prior_mean = c(
+      prs$beta_nu[1,1],    prs$beta_nu[1,2],    prs$beta_nu[1,3],
+      prs$beta_alpha[1,1], prs$beta_alpha[1,2],
+      prs$beta_tau[1,1],   prs$beta_tau[1,2],
+      prs$sigma_nu[1], prs$sigma_alpha[1], prs$sigma_tau[1], prs$sigma_v[1]
+    ),
+    prior_sd = c(
+      prs$beta_nu[2,1],    prs$beta_nu[2,2],    prs$beta_nu[2,3],
+      prs$beta_alpha[2,1], prs$beta_alpha[2,2],
+      prs$beta_tau[2,1],   prs$beta_tau[2,2],
+      prs$sigma_nu[2], prs$sigma_alpha[2], prs$sigma_tau[2], prs$sigma_v[2]
+    ),
+    converged = converged,
+    rhat_max  = rhat_max,
+    stringsAsFactors = FALSE
+  )
+
+
+
+
+  v_results <- data.frame(
+    I = I, J = J_per,
+    participant = seq_len(I),
+    true_v = true_v,
+    est_v  = s[paste0("v[", seq_len(I), "]"), "mean"]
+  )
+  # 1 row per participant with their true random slope and estimated random slope
+  # paste0("v[", 1:I, "]") --> generates stan parameter names v[1], ... v[I]
+
+  alpha_est <- matrix(NA_real_, I, K)
+  nu_est    <- matrix(NA_real_, I, K)
+  tau_est   <- matrix(NA_real_, I, K)
+  # posterior mean estimates from stan --> estimation for each value
+  # empty matrices with row length I and column length K to fill with estimated alpha, nu and tau
+  # mirroring alpha_true, nu_true, tau_true
+
+  for (i in seq_len(I)) { # for ppn i
+    for (k in seq_len(K)) { # in cond k
+      alpha_est[i, k] <- s[paste0("alpha[", i, ",", k, "]"), "mean"]
+      nu_est[i, k]    <- s[paste0("nu[",    i, ",", k, "]"), "mean"]
+      tau_est[i, k]   <- s[paste0("tau[",   i, ",", k, "]"), "mean"]
+      # s = stan summary matrix from before  with 1 row per parameter
+      # individual parameters are then called alpha[1,1], alpha[1,2], alpha[2,1] etc
+      # paste0("alpha[", i, ",", k, "]") makes this exact thing --> so for i=3, k=2 its alpha[3,2]
+      # the mean column extracts the posterior mean for this ppn in this condition
+      # whole result is stored in alpha_est[i, k]
+      # same for the tau and nu
+    }
+  }
+
+  indiv_results <- data.frame(
+    #  individual results data frame
+    I = I, J = J_per,
+    # every row gets the I and row of its run
+    condition  = rep(seq_len(K), each = I), # condition column
+    # seq_len(K) --> c(1, 2)
+    # rep(..., each = I) repeats every value I times so --> c(1,1,...,1, 2,2,...,2)
+    # as.vector() on a matrix reads column by column --> so the first I rows correspond to cond 1 and the next I rows to cond 2
+
+    true_alpha = as.vector(alpha_true), est_alpha = as.vector(alpha_est),
+    true_nu    = as.vector(nu_true),    est_nu    = as.vector(nu_est),
+    true_tau   = as.vector(tau_true),   est_tau   = as.vector(tau_est)
+    # as.vector() makes the I*K matrix into a vector of length I*K that first rerads column 1 and  then column 2
+    # true_alpha next to est_alpha in data frame --> every row has true value and estimate for the same cell (ppn + cond)
+    # need this to plot individual results later
+  )
+    # data frame has I*K rows per simulation run, one for each combination of participant and condition, and columns for the simulation design     (I, J), which condition it was, and the true and estimated value of each parameter
+  list(status = "ok", group = group_results, v = v_results, indiv = indiv_results,
+       priors_used = prs, rhat_max = rhat_max, converged = converged)
+  # status = ok is later for checking successful runs and bad ones
+
+}
+
+
+## compile Stan model
+cache_file <- paste0(tools::file_path_sans_ext(
+  "new_corrected_model_w_cond_and_slopes_2.stan"), ".rds")
+if (file.exists(cache_file)) file.remove(cache_file)
+# forces a fresh recompile --> not using old compiled version if edited
+
+## derive priors once per J value
+set.seed(42) # reproducible
+priors_by_J <- setNames(
+  lapply(J_vals, function(j) derive_priors_from_pilot(j, true, I_pilot = 20)),
+  # applies function to each element of J_vals --> returns list with 3 results
+  as.character(J_vals) # names the list elements "20", etc so they can be looked up again
+)
+# priors_by_J[["20"]], priors_by_J[["60"]] and priors_by_J[["160"]] each contains set of prior hyperparameters that are derived from 20 participants at that J
+
+
+
+## parallel simulation
+jobs      <- expand.grid(I = I_vals, J = J_vals, sim = seq_len(N_sim))
+# expand.grid creates 3 I values × 3 J values × 60 simulations = data frame with 540 rows --> one per job
+
+jobs_list <- split(jobs, seq_len(nrow(jobs)))
+## splits data frame into a list of one-row data frames, each worker gets one element of list
+
+cl <- makeCluster(detectCores() - 1)
+## makes cluster of worker processes --> detectCores() --> how many CPU cores --> uses all besides one
+
+clusterSetRNGStream(cl, 42)
+## parallel safe random number streams for all workers, seeded
+## otherwise all workers would use the same random numbers
+
+clusterExport(cl, varlist = c("run_one", "derive_priors_from_pilot",
+                              "ez_point_estimates", "derive_priors",
+                              "true", "priors_by_J"))
+# sends objects from session to every worker
+# workers = separate processes with empty environments without knowledge from session
+
+
+clusterEvalQ(cl, {
+  library(rstan)
+  library(dplyr)
+  rstan_options(auto_write = FALSE)
+  options(mc.cores = 1)
+  ez_cond <<- stan_model("new_corrected_model_w_cond_and_slopes_2.stan")
+})
+## each worker loads stan, compiles model into ez_cond, and sets mc.cores = 1 so stan doesn't use multiple cores from within a worker
+## "<<-" assigns to the global environment of the worker
+
+
+
+results_list <- parLapply(cl, jobs_list, function(row) {
+  run_one(I      = row$I,
+          J_per  = row$J,
+          true   = true,
+          model  = ez_cond,
+          priors = priors_by_J[[as.character(row$J)]])
+})
+# parallel lappply
+# distribute jobs across workers, each calls run_one function with  I, J, and priors and returns list of results
+
+
+stopCluster(cl)
+# shut down the worker processes in the end
+
+saveRDS(results_list, file = "output_new/simulation_results.rds")
+# save results
+
+
+
+
+
+
+## plotting
+
+# gather results
+ok_idx        <- sapply(results_list, function(r) !is.null(r) && r$status == "ok")
+# create vector of TRUE (run succeeded) or FALSE
+# !is.null(r) guard against NULL (worker crash)
+# r$status == "ok" checks whether run has the status ok or not
+
+ok_results    <- results_list[ok_idx]
+results_group <- bind_rows(lapply(ok_results, `[[`, "group"))
+# only the successful runs
+# lapply(..., "[[", "group") extracts group data frame from each result --> stacks all data frames vertically into one big data frame --> one row per parameter per simulation run
+
+results_v     <- bind_rows(lapply(ok_results, `[[`, "v")) # same here and
+results_indiv <- bind_rows(lapply(ok_results, `[[`, "indiv")) # here
+
+# exclusion report
+# counts how many runs fall into each category --> sum() count of TRUE
+n_total    <- length(results_list)
+n_ok       <- sum(ok_idx)
+n_excluded <- sum(sapply(results_list, function(r) !is.null(r) && r$status == "excluded"))
+n_error    <- sum(sapply(results_list, function(r) is.null(r)  || r$status == "error"))
+print(data.frame(
+  Total = n_total, Converged = n_ok, Excluded = n_excluded, Error = n_error,
+  `Excluded (%)` = round(100 * n_excluded / n_total, 1), check.names = FALSE
+))
+
+
+# exclusion breakdown by cell
+status_df <- bind_rows(lapply(seq_along(results_list), function(i) {
+  r <- results_list[[i]]; row <- jobs[i, ]
+  data.frame(I = row$I, J = row$J, sim = row$sim,
+             status = if (is.null(r)) "error" else r$status,
+             reason = if (is.null(r) || r$status == "ok") NA else r$reason)
+}))
+
+
+status_df %>%
+  group_by(I, J) %>%
+  summarise(n        = n(),
+            excluded = sum(status == "excluded"),
+            pct      = round(100 * excluded / n, 1),
+            reasons  = paste(table(reason[status == "excluded"]), collapse = ", "),
+            .groups  = "drop") %>%
+  print(n = Inf)
+# summarises separately for each I×J combination, n() counts rows in the group --> table exclusion rates per cell
+
+
+
+# factor labels for plots
+add_labels <- function(df) {
+  df %>% mutate(
+    I_label = factor(paste0("I = ", I), levels = paste0("I = ", I_vals)),
+    J_label = factor(paste0("J = ", J), levels = paste0("J = ", J_vals))
+  )
+}
+results_group <- add_labels(results_group)
+results_v     <- add_labels(results_v)
+results_indiv <- results_indiv %>%
+  add_labels() %>%
+  mutate(condition = factor(condition, labels = c("Condition 1 (k=1)", "Condition 2 (k=2)")))
+
+# theme for plots
+dark_theme <- theme_minimal(base_size = 12) +
+  theme(
+    plot.background   = element_rect(fill = "#1e1e1e", colour = NA),
+    panel.background  = element_rect(fill = "#1e1e1e", colour = NA),
+    panel.grid.major  = element_line(colour = "#333333"),
+    panel.grid.minor  = element_blank(),
+    text              = element_text(colour = "white"),
+    axis.text         = element_text(colour = "white"),
+    strip.text        = element_text(colour = "white"),
+    legend.background = element_rect(fill = "#1e1e1e"),
+    legend.text       = element_text(colour = "white")
+  )
+save_plot <- function(plot, filename, width = 8, height = 6) {
+  ggsave(file.path("output_new", filename), plot, width = width, height = height,
+         dpi = 300, bg = "#1e1e1e")
+}
+
+# group-level bias plots
+plot_group_bias <- function(param_name, label) {
+  df <- results_group %>%
+    filter(param == param_name) %>%
+    mutate(bias = estimate - true_val)
+  ggplot(df, aes(x = J_label, y = bias)) +
+    geom_hline(yintercept = 0, linetype = "dashed", colour = "white", linewidth = 0.5) +
+    geom_violin(fill = "goldenrod", colour = NA, alpha = 0.35, trim = TRUE, scale = "width") +
+    geom_jitter(colour = "goldenrod", alpha = 0.7, size = 1.4, width = 0.08) +
+    stat_summary(fun = mean, geom = "crossbar", colour = "white",
+                 linewidth = 0.6, width = 0.4, fatten = 1) +
+    facet_grid(I_label ~ .) +
+    labs(title = label, x = "Trials per condition", y = "Bias (estimate − true)") +
+    dark_theme
+}
+p_mu_nu    <- plot_group_bias("mu_nu",    expression(mu^(nu)~"(intercept, raw scale)"))
+p_mu_alpha <- plot_group_bias("mu_alpha", expression(mu^(alpha)))
+p_mu_tau   <- plot_group_bias("mu_tau",   expression(mu^(tau)))
+p_b1_nu    <- plot_group_bias("b1_nu",    expression(beta[1]^(nu)~"(covariate effect on drift)"))
+p_b2_nu    <- plot_group_bias("b2_nu",    expression(beta[2]^(nu)~"(condition effect on drift)"))
+p_b_alpha  <- plot_group_bias("b_alpha",  expression(beta^(alpha)~"(avg condition effect)"))
+p_b_tau    <- plot_group_bias("b_tau",    expression(beta^(tau)~"(condition)"))
+p_sigma_v  <- plot_group_bias("sigma_v",  expression(sigma[v]~"(random slope SD)"))
+for (p in list(p_mu_nu, p_mu_alpha, p_mu_tau,
+               p_b1_nu, p_b2_nu, p_b_alpha, p_b_tau, p_sigma_v)) print(p)
+save_plot(p_mu_nu,    "bias_mu_nu.png");    save_plot(p_mu_alpha, "bias_mu_alpha.png")
+save_plot(p_mu_tau,   "bias_mu_tau.png");   save_plot(p_b1_nu,    "bias_b1_nu.png")
+save_plot(p_b2_nu,    "bias_b2_nu.png");    save_plot(p_b_alpha,  "bias_b_alpha.png")
+save_plot(p_b_tau,    "bias_b_tau.png");    save_plot(p_sigma_v,  "bias_sigma_v.png")
+
+# individual-level recovery plots
+plot_indiv_recovery <- function(true_col, est_col, label) {
+  ggplot(results_indiv, aes_string(x = true_col, y = est_col, colour = "condition")) +
+    geom_abline(intercept = 0, slope = 1,
+                linetype = "dashed", colour = "white", linewidth = 0.5) +
+    geom_point(alpha = 0.35, size = 0.9) +
+    scale_colour_manual(values = c("Condition 1 (k=1)" = "goldenrod",
+                                   "Condition 2 (k=2)" = "steelblue")) +
+    facet_grid(I_label ~ J_label) +
+    labs(title = label, x = paste("True", label), y = paste("Estimated", label),
+         colour = "Condition") +
+    dark_theme + theme(legend.position = "bottom")
+}
+p_indiv_alpha <- plot_indiv_recovery("true_alpha", "est_alpha", expression(alpha[ik]))
+p_indiv_nu    <- plot_indiv_recovery("true_nu",    "est_nu",    expression(nu[ik]))
+p_indiv_tau   <- plot_indiv_recovery("true_tau",   "est_tau",   expression(tau[ik]))
+for (p in list(p_indiv_alpha, p_indiv_nu, p_indiv_tau)) print(p)
+save_plot(p_indiv_alpha, "recovery_alpha.png", width = 10, height = 8)
+save_plot(p_indiv_nu,    "recovery_nu.png",    width = 10, height = 8)
+save_plot(p_indiv_tau,   "recovery_tau.png",   width = 10, height = 8)
+
+# random slope recovery plot
+p_v_recovery <- ggplot(results_v, aes(x = true_v, y = est_v)) +
+  geom_abline(intercept = 0, slope = 1,
+              linetype = "dashed", colour = "white", linewidth = 0.5) +
+  geom_point(colour = "goldenrod", alpha = 0.4, size = 1.2) +
+  facet_grid(I_label ~ J_label) +
+  labs(title = expression("Recovery of by-participant random slopes " * v[i]),
+       x = "True v", y = "Estimated v") +
+  dark_theme
+print(p_v_recovery)
+save_plot(p_v_recovery, "recovery_v.png", width = 10, height = 8)
+
+# prior summary table
+prior_summary <- results_group %>%
+  group_by(param, I, J) %>%
+  summarise(`Prior mean (avg)` = round(mean(prior_mean, na.rm = TRUE), 3),
+            `Prior SD (avg)`   = round(mean(prior_sd,   na.rm = TRUE), 3),
+            .groups = "drop") %>%
+  rename(Parameter = param)
+write.csv(prior_summary, file.path("output_new", "prior_summary.csv"), row.names = FALSE)
+kable(prior_summary,
+      caption = "average derived prior hyperparameters across simulations,
+                 by parameter, number of participants, and trials per condition.")
+```
+
+```{r small try out sim for different nus}
+library(rstan)
+library(ggplot2)
+rstan_options(auto_write = TRUE)
+options(mc.cores = 1)
+
+# ── test grid ──────────────────────────────────────────────────────────────────
+mu_nu_vals <- c(-0.5, -0.2, 0.0, 0.2, 0.4, 0.8)  # true population drift rates to test
+I     <- 20   # small -- just for testing
+J_per <- 60
+K     <- 2
+set.seed(99)
+
+# ── fixed nuisance true parameters ────────────────────────────────────────────
+true_fixed <- list(
+  b1_nu    = 0.0,   # no covariate effect for simplicity
+  b2_nu    = 0.0,   # no condition effect for simplicity
+  mu_alpha = 1.5,
+  b_alpha  = 0.0,
+  mu_tau   = 0.3,
+  b_tau    = 0.0,
+  sigma_nu    = 0.3,
+  sigma_alpha = 0.25,
+  sigma_tau   = 0.15,
+  sigma_v     = 0.1
+)
+
+# ── flat/wide priors (not pilot-derived, just for the test) ───────────────────
+make_priors <- function() {
+  list(
+    beta_nu    = matrix(c(0, 0, 0,
+                          1, 1, 1), nrow = 2, byrow = TRUE),
+    beta_alpha = matrix(c(1.5, 0,
+                          0.5, 0.5), nrow = 2, byrow = TRUE),
+    beta_tau   = matrix(c(0.3, 0,
+                          0.3, 0.3), nrow = 2, byrow = TRUE),
+    sigma_nu    = c(0.3, 0.3),
+    sigma_alpha = c(0.3, 0.2),
+    sigma_tau   = c(0.2, 0.1),
+    sigma_v     = c(0.1, 0.1)
+  )
+}
+
+# ── data generator ────────────────────────────────────────────────────────────
+gen_data <- function(mu_nu, true) {
+  cond_dummy <- c(0, 1)
+  x      <- rnorm(I, 0, 1)
+  true_v <- rnorm(I, 0, true$sigma_v)
+  
+  X_nu    <- array(NA_real_, dim = c(I, K, 3))
+  X_alpha <- array(NA_real_, dim = c(I, K, 2))
+  X_tau   <- array(NA_real_, dim = c(I, K, 2))
+  for (i in seq_len(I)) for (k in seq_len(K)) {
+    X_nu[i,k,]    <- c(1, x[i], cond_dummy[k])
+    X_alpha[i,k,] <- c(1, cond_dummy[k])
+    X_tau[i,k,]   <- c(1, cond_dummy[k])
+  }
+  
+  J_mat <- matrix(J_per, I, K)
+  C_mat <- matrix(NA_integer_, I, K)
+  MRT   <- matrix(NA_real_, I, K)
+  VRT   <- matrix(NA_real_, I, K)
+  
+  for (i in seq_len(I)) for (k in seq_len(K)) {
+    nu_ik    <- rnorm(1, mu_nu + true$b1_nu*x[i] + true$b2_nu*cond_dummy[k], true$sigma_nu)
+    alpha_ik <- NA; repeat { a <- rnorm(1, true$mu_alpha, true$sigma_alpha); if (a > 0.1 && a < 3) { alpha_ik <- a; break } }
+    tau_ik   <- NA; repeat { t <- rnorm(1, true$mu_tau,   true$sigma_tau);   if (t > 0.05)         { tau_ik   <- t; break } }
+    
+    e      <- exp(-alpha_ik * nu_ik)
+    pi_c   <- 1 / (1 + e)
+    mu_rt  <- tau_ik + (alpha_ik / (2*nu_ik)) * ((1-e)/(1+e))
+    sig2rt <- (alpha_ik / (2*nu_ik^3)) * ((1 - 2*alpha_ik*nu_ik*e - e^2) / (1+e)^2)
+    sig2rt <- max(sig2rt, 1e-6)   # same guard as Stan
+    
+    C_ik        <- max(1L, min(rbinom(1, J_per, pi_c), J_per - 1L))
+    MRT[i,k]    <- rnorm(1, mu_rt,  sqrt(sig2rt / C_ik))
+    VRT[i,k]    <- max(rnorm(1, sig2rt, sqrt(2*sig2rt^2 / max(C_ik-1,1))), 1e-6)
+    C_mat[i,k]  <- C_ik
+  }
+  
+  prs <- make_priors()
+  list(
+    stan_data = list(
+      I=I, K=K, P_nu=3L, P_alpha=2L, P_tau=2L,
+      J=J_mat, C=C_mat, MRT=MRT, VRT=VRT,
+      X_nu=X_nu, X_alpha=X_alpha, X_tau=X_tau,
+      prior_beta_nu=prs$beta_nu, prior_beta_alpha=prs$beta_alpha, prior_beta_tau=prs$beta_tau,
+      prior_sigma_nu=prs$sigma_nu, prior_sigma_alpha=prs$sigma_alpha,
+      prior_sigma_tau=prs$sigma_tau, prior_sigma_v=prs$sigma_v
+    ),
+    priors = prs
+  )
+}
+
+# ── compile once ──────────────────────────────────────────────────────────────
+model <- stan_model("new_corrected_model_w_cond_and_slopes_2.stan")
+
+# ── fit loop ──────────────────────────────────────────────────────────────────
+results <- lapply(mu_nu_vals, function(mu_nu) {
+  cat(sprintf("\n=== true mu_nu = %.2f ===\n", mu_nu))
+  d   <- gen_data(mu_nu, true_fixed)
+  fit <- sampling(model, data = d$stan_data,
+                  iter = 1500, warmup = 500, chains = 2, cores = 1, refresh = 0,
+                  control = list(adapt_delta = 0.90, max_treedepth = 10))
+  s   <- summary(fit)$summary
+  data.frame(
+    true_mu_nu = mu_nu,
+    est        = s["beta_nu[1]", "mean"],
+    lo         = s["beta_nu[1]", "2.5%"],
+    hi         = s["beta_nu[1]", "97.5%"],
+    rhat       = s["beta_nu[1]", "Rhat"]
+  )
+})
+
+df <- do.call(rbind, results)
+print(df)
+
+# ── plot ──────────────────────────────────────────────────────────────────────
+ggplot(df, aes(x = true_mu_nu, y = est)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", colour = "grey60") +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.04, colour = "steelblue") +
+  geom_point(size = 3, colour = "goldenrod") +
+  geom_text(aes(label = sprintf("Rhat=%.3f", rhat)),
+            vjust = -1, size = 3, colour = "white") +
+  labs(title = "Recovery of mu_nu across the sign boundary",
+       subtitle = "Points = posterior mean, bars = 95% CI, dashed = identity",
+       x = "True mu_nu", y = "Estimated beta_nu[1]") +
+  theme_minimal(base_size = 12) +
+  theme(plot.background = element_rect(fill = "#1e1e1e", colour = NA),
+        panel.background = element_rect(fill = "#1e1e1e", colour = NA),
+        panel.grid.major = element_line(colour = "#333333"),
+        text = element_text(colour = "white"),
+        axis.text = element_text(colour = "white"))
+```
+
