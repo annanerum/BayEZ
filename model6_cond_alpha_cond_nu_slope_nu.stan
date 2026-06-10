@@ -35,15 +35,12 @@ parameters {
   real<lower=0.05, upper=0.6> sigma_tau;
   real<lower=0>               sigma_v;
 
-  vector[I] z_v;  // non-centred: raw N(0,1) slopes; v[i] = sigma_v * z_v[i]
+  vector[I] v;  // by-participant random slopes on condition effect for nu
+  // v[i] shifts how much participant i's drift changes between conditions
 
   matrix<lower=0.1, upper=3.0>[I, K] alpha;
   matrix[I, K]                        nu;
   matrix<lower=0.05>[I, K]            tau;
-}
-
-transformed parameters {
-  vector[I] v = sigma_v * z_v;  // actual random slopes
 }
 
 model {
@@ -62,12 +59,21 @@ model {
   sigma_alpha ~ normal(prior_sigma_alpha[1], prior_sigma_alpha[2]);
   sigma_tau   ~ normal(prior_sigma_tau[1],   prior_sigma_tau[2]);
   sigma_v     ~ normal(prior_sigma_v[1],     prior_sigma_v[2]);
-  z_v         ~ normal(0, 1);  // non-centred prior
+  v           ~ normal(0, sigma_v);
 
   for (i in 1:I) {
     for (k in 1:K) {
       real mu_nu_ik    = X_nu[i, k] * beta_nu + v[i] * X_nu[i, k][2];
+      // X_nu row = [1, cond_dummy]
+      // fixed part: intercept + condition effect
+      // random part: v[i] * cond_dummy -- only activates in condition 2
+      // so in cond 1: mu_nu = intercept
+      // in cond 2:    mu_nu = intercept + beta_nu[2] + v[i]
+
       real mu_alpha_ik = X_alpha[i, k] * beta_alpha;
+      // fixed condition effect on alpha, no random slope
+      // cond 1: intercept, cond 2: intercept + beta_alpha[2]
+
       real mu_tau_ik   = X_tau[i, k]   * beta_tau;
 
       nu[i, k]    ~ normal(mu_nu_ik,    sigma_nu);
