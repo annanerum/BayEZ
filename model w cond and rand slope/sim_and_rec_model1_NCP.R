@@ -1,4 +1,5 @@
 # Model 1 NCP: alpha=cond+slope (non-centred), nu=cov, tau=intercept
+# für nächstes model alpha und nu tauschen
 
 library(rstan)
 library(bayesplot)
@@ -11,27 +12,28 @@ library(parallel)
 rstan_options(auto_write = TRUE)
 options(mc.cores = 1)
 
-if (!dir.exists("output_model1_v2_ncp")) dir.create("output_model1_v2_ncp")
+if (!dir.exists("output_model1_v2_ncp_new_params")) dir.create("output_model1_v2_ncp_new_params")
 
 ## simulation grid
 I_vals <- c(80, 160)
 J_vals <- c(80, 160)
-N_sim  <- 10
+N_sim  <- 6
 K      <- 2
 
 ## true parameters
 true_m1 <- list(
-  mu_nu    = 1.0,
-  b1_nu    = 0.3,
-  mu_alpha = 1.5,
+  mu_nu    = 0.5, # 1.0
+  b1_nu    = 0.2,  # 0.3
+  mu_alpha = 1.5,  
   b_alpha  = 0.2,
   mu_tau   = 0.3,
-  sigma_nu    = 0.3,
+  sigma_nu    = 0.15, # 0.3
   sigma_alpha = 0.25,
   sigma_tau   = 0.15,
   sigma_v     = 0.2
 )
-
+# sigma_v = 0.4 and mu_alpha = 1.5 crashes because lower bound is 0.1
+# and (mu_alpha − lower_bound) / sigma_v = small --> ppns at the tail of the slope distribution hit the wall
 
 ## EZ point estimates
 ez_point_estimates <- function(C_arr, J_arr, MRT_mat, VRT_mat, I, K) {
@@ -348,7 +350,7 @@ results_list <- parLapply(cl, jobs_list, function(row) {
 })
 
 stopCluster(cl)
-saveRDS(results_list, "output_model1_v2_ncp/simulation_results.rds")
+saveRDS(results_list, "output_model1_v2_ncp_new_params/simulation_results.rds")
 
 
 ## post-processing
@@ -429,7 +431,7 @@ dark_theme <- theme_minimal(base_size=12) +
   )
 
 save_plot <- function(p, filename, width=10, height=8) {
-  ggsave(file.path("output_model1_v2_ncp", filename), p,
+  ggsave(file.path("output_model1_v2_ncp_new_params", filename), p,
          width=width, height=height, dpi=300, bg="#1e1e1e")
 }
 
@@ -464,4 +466,4 @@ save_plot(p_nu,    "m1_ncp_recovery_nu.png")
 save_plot(p_tau,   "m1_ncp_recovery_tau.png")
 save_plot(p_v,     "m1_ncp_recovery_v.png")
 
-cat("\nDone. Results saved to output_model1_v2_ncp/\n")
+cat("\nDone. Results saved to output_model1_v2_ncp_new_params/\n")
