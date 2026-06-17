@@ -21,7 +21,7 @@ K      <- 2
 
 ## true parameters
 true_m2 <- list(
-  mu_nu    = 0.7, #1.0,
+  mu_nu    = 0.5, #1.0,
   b1_nu    = 0.2,
   mu_alpha = 1.5,
   b_alpha  = 0.3,
@@ -29,7 +29,7 @@ true_m2 <- list(
   sigma_nu    = 0.18, #0.3
   sigma_alpha = 0.25,
   sigma_tau   = 0.15,
-  sigma_v     = 0.1  #0.2
+  sigma_v     = 0.2 
 )
 
 
