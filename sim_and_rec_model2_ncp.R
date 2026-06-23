@@ -16,7 +16,7 @@ if (!dir.exists("output_model2_v2_ncp_new_params")) dir.create("output_model2_v2
 ## simulation grid
 I_vals <- c(80, 160)
 J_vals <- c(80, 160)
-N_sim  <- 10
+N_sim  <- 3
 K      <- 2
 
 ## true parameters
