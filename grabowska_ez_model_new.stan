@@ -1,5 +1,5 @@
 //   nu : intercept + condition + response_type + condition*response_type
-//   alpha : intercept + response_type
+//   alpha : intercept + response_type + condition
 //   tau : intercept only
 
 // 4 cells 
@@ -125,10 +125,11 @@ model {
                     + nu_cr[i]    * X_nu[i, k][4];
 
       // linear predictor for alpha:
-      // intercept + person's resp_type slope * X[2]
+      // intercept + person's resp_type slope * X[2] + condition (fixed) * X[3]
       // slope alpha_r[i] can be negative --> post-error cells get higher alpha
       real mu_alpha_ik = beta_alpha[1] * X_alpha[i, k][1]
-                       + alpha_r[i]    * X_alpha[i, k][2];
+                       + alpha_r[i]    * X_alpha[i, k][2]
+                       + beta_alpha[3] * X_alpha[i, k][3];
 
       // tau: same across cells per person
       real mu_tau_ik = beta_tau;

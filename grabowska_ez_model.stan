@@ -1,5 +1,3 @@
-// Priors passed from R as data 
-
 //   nu : intercept + condition + response_type + condition*response_type
 //   alpha : intercept + response_type
 //   tau : intercept only
@@ -161,19 +159,5 @@ model {
   }
 }
 
-generated quantities {
-  matrix[I, K] mean_nu_ik;
-  matrix[I, K] mean_alpha_ik;
-  matrix[I, K] mean_tau_ik;
 
-  for (i in 1:I) for (k in 1:K) {
-    mean_nu_ik[i, k]    = beta_nu[1]  * X_nu[i, k][1]
-                        + nu_c[i]     * X_nu[i, k][2]
-                        + nu_r[i]     * X_nu[i, k][3]
-                        + nu_cr[i]    * X_nu[i, k][4];
-    mean_alpha_ik[i, k] = beta_alpha[1] * X_alpha[i, k][1]
-                        + alpha_r[i]    * X_alpha[i, k][2];
-    mean_tau_ik[i, k]   = beta_tau;
-  }
-}
 
