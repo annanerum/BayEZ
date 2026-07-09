@@ -46,9 +46,13 @@ Question: do the mean results come closer to the original ones when we add the c
 because sigma_nu/sigma_alpha/sigma_tau were conflated with between-person intercept differences.
 But then I realized that it only matters for tau since nu[i,k] is completely unconstrained (matrix[I,K] nu;) anyways, there are no boundaries. alpha[i,k] is bounded (matrix<lower=0.1, upper=3.0>[I,K] alpha;) but without T[] in smapling, so Stan constraints the arameter with the bounds, doesnt matter whether mu_alpha_ik (alpha_0[i]) is in the right bounds. An extreme alpha_0[i] would be a weird asymmetric prior and not an error. tau[i,k] is bounded and truncated (T[0.05,]) so only here the situation can be critical because tau_0[i] (mean of truncation) could theoretically be below 0.05 or negative, which would lead to numercial difficulties in fast trials (lots of mass at boundaries / truncation ends). The files for creation of this tryout but now disregarded model are called _randint.stan_ and _randint.R_. 
 
+It is good for comparison the per person parameters though, because their model has random intercepts. 
 
 
 
+**Comparison per person --> learnings**
+
+- 
 
 
 
