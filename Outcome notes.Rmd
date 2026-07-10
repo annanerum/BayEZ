@@ -42,9 +42,7 @@ Question: do the mean results come closer to the original ones when we add the c
 - paper does not give a sigma_tau value
 
 
-*Disclaimer*: I realized that the paper does it differently than us so now I made a new model with intercepts for nu, alpha, and tau that are person-specific random intercepts (nu_0[i], alpha_0[i], tau_0[i]) because we didn't have that. Instead we had single fixed population values (beta_nu[1], beta_alpha[1], beta_tau). The change now should make sigma_nu0/sigma_alpha0/sigma_tau0 more comparable to the paper's "intercept variability sigma" (Table 3)
-because sigma_nu/sigma_alpha/sigma_tau were conflated with between-person intercept differences.
-But then I realized that it only matters for tau since nu[i,k] is completely unconstrained (matrix[I,K] nu;) anyway, there are no boundaries. alpha[i,k] is bounded (matrix<lower=0.1, upper=3.0>[I,K] alpha;) but without T[] in sampling, so Stan constraints the parameter with the bounds, doesn't matter whether mu_alpha_ik (alpha_0[i]) is in the right bounds. An extreme alpha_0[i] would be a weird asymmetric prior and not an error. tau[i,k] is bounded and truncated (T[0.05,]) so only here the situation can be critical because tau_0[i] (mean of truncation) could theoretically be below 0.05 or negative, which would lead to numerical difficulties in fast trials (lots of mass at boundaries / truncation ends). The files for creation of this try out but now disregarded model are called _randint.stan_ and _randint.R_. 
+*Disclaimer*: I realized that the paper does it differently than us so now I made a new model with intercepts for nu, alpha, and tau that are person-specific random intercepts (nu_0[i], alpha_0[i], tau_0[i]) because we didn't have that. Instead we had single fixed population values (beta_nu[1], beta_alpha[1], beta_tau). The change now should make sigma_nu0/sigma_alpha0/sigma_tau0 more comparable to the paper's "intercept variability sigma" (Table 3) because sigma_nu/sigma_alpha/sigma_tau were conflated with between-person intercept differences. But then I realized that it only matters for tau since nu[i,k] is completely unconstrained (matrix[I,K] nu;) anyway, there are no boundaries. alpha[i,k] is bounded (matrix<lower=0.1, upper=3.0>[I,K] alpha;) but without T[] in sampling, so Stan constraints the parameter with the bounds, doesn't matter whether mu_alpha_ik (alpha_0[i]) is in the right bounds. An extreme alpha_0[i] would be a weird asymmetric prior and not an error. tau[i,k] is bounded and truncated (T[0.05,]) so only here the situation can be critical because tau_0[i] (mean of truncation) could theoretically be below 0.05 or negative, which would lead to numerical difficulties in fast trials (lots of mass at boundaries / truncation ends). The files for creation of this try out but now disregarded model are called _randint.stan_ and _randint.R_. 
 
 It is good for comparison the per person parameters though, because their model has random intercepts. 
 
@@ -60,6 +58,7 @@ It is good for comparison the per person parameters though, because their model 
 - the tau proxy versus participants_ter had r = 0.47, the alpha proxy versus participants_alpha had r = 0.21 (that looks like just noise)
 
 ***Model with random intercepts (grabowska_ez_model_randint.stan / grabowska_ez_fit_krakow_randint.R)***
+
 - Adding nu_0[i]/alpha_0[i]/tau_0[i] gives us actual hierarchical intercepts so structurally it is then matching Grabowska's participants_delta/participants_alpha/participants_ter
 - results: nu_0, r = 0.92; tau_0, r = 0.54 (slight improvement); alpha_0, r = 0.26 (only small improvement, still weak)
 - nu_c is still at r = 0.85, it's the same parameter in both models
@@ -80,3 +79,16 @@ It is good for comparison the per person parameters though, because their model 
 - highest Rhat across all parameters and all runs: 1.02 
 - seems like the population-level estimates from this model are reproducible
 
+
+**okay but why are they different than the paper??**
+
+- option 1: we do not have the EEG predictor
+- model includes the trial-level EEG amplitude (pre_ne_FCz_standardized) as a predictor and its interaction with response type
+- EEG amplitude is correlated with response type 
+- we dropped a predictor that was correlated with the ones we kept --> maybe our coefficients absorb the missing predictor's explained variance
+- that could be why b_nu_condition too low, b_nu_interaction too high and mu_alpha about half the value
+- option 2: the paper only has condition, EEG-amplitude, and EEG interaction with response-type cvarying by person, response_type is fixed, we let response_type vary by person
+- option 3: condition effect on alpha is person-specific (participants_alpha_cond) in the paper, in my model its fixed --> bias the fixed estimate so there is more shrinkage??
+- our b_alpha_condition (0.057) is a lot smaller so maybe thats why 
+
+--> **I will try out option 2 and 3 now**
