@@ -1,0 +1,83 @@
+
+model {
+    #===================================================================
+    # PRIORS: Population-level regression coefficients
+    #===================================================================
+    
+    # Drift rate coefficients: beta_nu[1] = intercept, beta_nu[2] = condition effect
+    for (p in 1:P_nu) {
+        beta_nu[p] ~ dnorm(prior_beta_nu[1, p], pow(prior_beta_nu[2, p], -2))
+    }
+    
+    # Boundary coefficients: beta_alpha[1] = intercept, beta_alpha[2] = covariate effect
+    for (p in 1:P_alpha) {
+        beta_alpha[p] ~ dnorm(prior_beta_alpha[1, p], pow(prior_beta_alpha[2, p], -2))
+    }
+    
+    # Non-decision time coefficients: beta_tau[1] = intercept only
+    for (p in 1:P_tau) {
+        beta_tau[p] ~ dnorm(prior_beta_tau[1, p], pow(prior_beta_tau[2, p], -2))
+    }
+    
+    #===================================================================
+    # PRIORS: Variance components
+    #===================================================================
+    sigma_nu    ~ dnorm(prior_sigma_nu[1], pow(prior_sigma_nu[2], -2)) T(0, )
+    sigma_alpha ~ dnorm(prior_sigma_alpha[1], pow(prior_sigma_alpha[2], -2)) T(0.1, 0.8)
+    sigma_tau   ~ dnorm(prior_sigma_tau[1], pow(prior_sigma_tau[2], -2)) T(0.05, 0.6)
+    sigma_v     ~ dnorm(prior_sigma_v[1], pow(prior_sigma_v[2], -2)) T(0, )
+    
+    #===================================================================
+    # RANDOM SLOPES (Non-centered parameterization)
+    #===================================================================
+    for (i in 1:I) {
+        z_v[i] ~ dnorm(0, 1)
+        v[i] <- beta_nu[2] + sigma_v * z_v[i]  # Participant's condition effect
+    }
+    
+    #===================================================================
+    # INDIVIDUAL PARAMETERS AND LIKELIHOOD
+    #===================================================================
+    for (i in 1:I) {
+        for (k in 1:K) {
+            
+            #---------------------------------------------------------------
+            # Linear predictors using design matrices
+            #---------------------------------------------------------------
+            # mu_nu: intercept + participant's random slope * condition dummy
+            mu_nu[i,k] <- beta_nu[1] + v[i] * X_nu[i, k, 2]
+            
+            # mu_alpha: design matrix multiplication
+            mu_alpha[i,k] <- inprod(X_alpha[i, k, 1:P_alpha], beta_alpha[1:P_alpha])
+            
+            # mu_tau: design matrix multiplication (intercept only here)
+            mu_tau[i,k] <- inprod(X_tau[i, k, 1:P_tau], beta_tau[1:P_tau])
+            
+            #---------------------------------------------------------------
+            # Individual DDM parameters
+            #---------------------------------------------------------------
+            drift[i,k] ~ dnorm(mu_nu[i,k], pow(sigma_nu, -2))
+            bound[i,k] ~ dnorm(mu_alpha[i,k], pow(sigma_alpha, -2)) T(0.1, 3.0)
+            nondt[i,k] ~ dnorm(mu_tau[i,k], pow(sigma_tau, -2)) T(0.05, )
+            
+            #---------------------------------------------------------------
+            # EZ-DDM Forward Equations
+            #---------------------------------------------------------------
+            ey[i,k] <- exp(-bound[i,k] * drift[i,k])
+            Pc[i,k] <- 1 / (1 + ey[i,k])
+            MDT[i,k] <- (bound[i,k] / (2 * drift[i,k])) * (1 - ey[i,k]) / (1 + ey[i,k])
+            MRT[i,k] <- MDT[i,k] + nondt[i,k]
+            PRT[i,k] <- 2 * pow(drift[i,k], 3) / bound[i,k] * 
+                        pow(ey[i,k] + 1, 2) / 
+                        (2 * -bound[i,k] * drift[i,k] * ey[i,k] - pow(ey[i,k], 2) + 1)
+            
+            #---------------------------------------------------------------
+            # Likelihood: Sampling distributions for summary statistics
+            #---------------------------------------------------------------
+            C[i,k] ~ dbin(Pc[i,k], J[i,k])
+            meanRT[i,k] ~ dnorm(MRT[i,k], PRT[i,k] * J[i,k])
+            varRT[i,k] ~ dnorm(1/PRT[i,k], 0.5 * (J[i,k] - 1) * pow(PRT[i,k], 2))
+        }
+    }
+}
+

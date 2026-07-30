@@ -1,0 +1,1031 @@
+---
+title: "Design Matrix implementation for Hierarchical EZ-DDM in JAGS"
+author: "Adriana F. Chávez De la Peña"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    self_contained: true
+    thumbnails: false
+    lightbox: true
+    gallery: true
+    highlight: tango
+    fig_width: 12 
+    fig_height: 8 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(here)
+library(R2jags)
+```
+
+# Overview
+
+This document presents a JAGS replication of the simulation study conducted in STAN by Anne Giacobello (see `/working simulation + output/`). The key feature of this implementation is the **design matrix approach**, which allows flexible specification of predictors for each DDM parameter without rewriting the model.
+
+## Design matrix specification
+
+The model uses three **3D design arrays** to specify predictors for each DDM parameter. Each array has dimensions $I \times K \times P$, where for each participant $i$ and condition $k$, the slice $X[i,k,]$ is a row vector of $P$ predictor values.
+
+| Parameter | Design Array | Dimensions | Predictors |
+|-----------|--------------|------------|------------|
+| $\nu$ (drift) | $X_\nu[i,k,p]$ | $I \times K \times P_\nu$ | Intercept + Condition (Dummy) |
+| $\alpha$ (boundary) | $X_\alpha[i,k,p]$ | $I \times K \times P_\alpha$ | Intercept + Covariate (Continuous) |
+| $\tau$ (non-decision) | $X_\tau[i,k,p]$ | $I \times K \times P_\tau$ | Intercept only |
+
+Where:
+
+- $I$ = number of participants
+- $K$ = number of conditions (each participant has one observation per condition)
+- $P$ = number of predictors (including intercept) for each parameter:
+  - $P_\nu = 2$: intercept + dummy-coded condition (0 for condition 1, 1 for condition 2)
+  - $P_\alpha = 2$: intercept + continuous between-subject covariate $x_i$
+  - $P_\tau = 1$: intercept only (no condition or covariate effects)
+
+The $I \times K \times P$ structure enables generality. Using the same 3D structure for all parameters allows uniform indexing in the JAGS model code and supports future extensions (e.g., participant-by-condition interactions).
+
+The model computes linear predictors using inner products: $\mu_{\nu,ik} = X_\nu[i,k,] \cdot \beta_\nu$. This works regardless of how many predictors you have, because the inner product handles vectors of any length. This means that we could change $P$ (number of predictors) and/or the values in $X$ (which predictors to include) without rewriting the model code.
+
+For example, to add a second covariate to $\alpha$, just set $P_\alpha = 3$ and $X_\alpha[i,k,] = [1, x_{1,i}, x_{2,i}]$. No model rewriting needed.
+
+## Hierarchical structure
+
+**Population-level parameters:**
+
+- $\beta_{\nu,1}$ = population mean drift rate (intercept, when condition = 0)
+- $\beta_{\nu,2}$ = population mean condition effect on drift
+- $\beta_{\alpha,1}$ = population mean boundary separation (intercept)
+- $\beta_{\alpha,2}$ = covariate effect on boundary
+- $\beta_{\tau,1}$ = population mean non-decision time
+
+
+
+**Individual-level random effects:**
+
+- $v_i \sim \text{Normal}(0, \sigma_v)$ = participant-specific deviation from the mean condition effect
+- $x_i \sim \text{Normal}(0, 1)$ = standardized covariate value for participant $i$
+
+**Linear predictors for expected values:**
+
+$$\mu_{\nu,ik} = \beta_{\nu,1} + (\beta_{\nu,2} + v_i) \cdot \text{cond}_k$$
+
+$$\mu_{\alpha,ik} = \beta_{\alpha,1} + \beta_{\alpha,2} \cdot x_i$$
+
+$$\mu_{\tau,ik} = \beta_{\tau,1}$$
+
+Where $\text{cond}_k$ is a dummy variable (0 for condition 1, 1 for condition 2).
+
+**Individual parameters (with residual variability):**
+
+$$\nu_{ik} \sim \text{Normal}(\mu_{\nu,ik}, \sigma_\nu)$$
+
+$$\alpha_{ik} \sim \text{Normal}(\mu_{\alpha,ik}, \sigma_\alpha) \text{ truncated to } [0.1, 3.0]$$
+
+$$\tau_{ik} \sim \text{Normal}(\mu_{\tau,ik}, \sigma_\tau) \text{ truncated to } [0.05, \infty)$$
+
+## Simulation Design
+
+Following Anne's STAN implementation:
+```{r}
+I_vals <- c(80, 160)   # Number of participants
+J_vals <- c(80, 160)   # Trials per condition
+K      <- 2            # Number of conditions
+N_sim  <- 3            # Replications per cell
+
+# Store design in a grid
+sim_grid <- expand.grid(I = I_vals,
+                        J = J_vals,
+                        sim = 1:N_sim)
+print(sim_grid)
+```
+
+**Total simulations:** $2 \times 2 \times 3 = 12$
+
+# True Parameter Values
+
+```{r}
+#===============================================================================
+# True population parameters (matching Anne's STAN simulation)
+#===============================================================================
+true_pars <- list(
+    # Drift rate (nu) parameters
+    mu_nu    = 0.50,   # Population intercept
+    b1_nu    = 0.20,   # Fixed condition effect
+    sigma_nu = 0.18,   # Residual SD
+    sigma_v  = 0.20,   # Random slope SD
+    
+    # Boundary separation (alpha) parameters
+    mu_alpha  = 1.50,  # Population intercept
+    b_alpha   = 0.30,  # Covariate effect
+    sigma_alpha = 0.25,# Residual SD
+    
+    # Non-decision time (tau) parameters
+    mu_tau    = 0.30,  # Population intercept
+    sigma_tau = 0.15   # Residual SD
+)
+```
+
+# JAGS Model with Design Matrices
+
+```{r}
+#===============================================================================
+# Write JAGS model file
+#===============================================================================
+modelFile <- here("JAGS", "demos", "simulation-study", "design_matrix", 
+                  "model_design_matrix.bug")
+
+model_code <- "
+model {
+    #===================================================================
+    # PRIORS: Population-level regression coefficients
+    #===================================================================
+    
+    # Drift rate coefficients: beta_nu[1] = intercept, beta_nu[2] = condition effect
+    for (p in 1:P_nu) {
+        beta_nu[p] ~ dnorm(prior_beta_nu[1, p], pow(prior_beta_nu[2, p], -2))
+    }
+    
+    # Boundary coefficients: beta_alpha[1] = intercept, beta_alpha[2] = covariate effect
+    for (p in 1:P_alpha) {
+        beta_alpha[p] ~ dnorm(prior_beta_alpha[1, p], pow(prior_beta_alpha[2, p], -2))
+    }
+    
+    # Non-decision time coefficients: beta_tau[1] = intercept only
+    for (p in 1:P_tau) {
+        beta_tau[p] ~ dnorm(prior_beta_tau[1, p], pow(prior_beta_tau[2, p], -2))
+    }
+    
+    #===================================================================
+    # PRIORS: Variance components
+    #===================================================================
+    sigma_nu    ~ dnorm(prior_sigma_nu[1], pow(prior_sigma_nu[2], -2)) T(0, )
+    sigma_alpha ~ dnorm(prior_sigma_alpha[1], pow(prior_sigma_alpha[2], -2)) T(0.1, 0.8)
+    sigma_tau   ~ dnorm(prior_sigma_tau[1], pow(prior_sigma_tau[2], -2)) T(0.05, 0.6)
+    sigma_v     ~ dnorm(prior_sigma_v[1], pow(prior_sigma_v[2], -2)) T(0, )
+    
+    #===================================================================
+    # RANDOM SLOPES (Non-centered parameterization)
+    #===================================================================
+    for (i in 1:I) {
+        z_v[i] ~ dnorm(0, 1)
+        v[i] <- beta_nu[2] + sigma_v * z_v[i]  # Participant's condition effect
+    }
+    
+    #===================================================================
+    # INDIVIDUAL PARAMETERS AND LIKELIHOOD
+    #===================================================================
+    for (i in 1:I) {
+        for (k in 1:K) {
+            
+            #---------------------------------------------------------------
+            # Linear predictors using design matrices
+            #---------------------------------------------------------------
+            # mu_nu: intercept + participant's random slope * condition dummy
+            mu_nu[i,k] <- beta_nu[1] + v[i] * X_nu[i, k, 2]
+            
+            # mu_alpha: design matrix multiplication
+            mu_alpha[i,k] <- inprod(X_alpha[i, k, 1:P_alpha], beta_alpha[1:P_alpha])
+            
+            # mu_tau: design matrix multiplication (intercept only here)
+            mu_tau[i,k] <- inprod(X_tau[i, k, 1:P_tau], beta_tau[1:P_tau])
+            
+            #---------------------------------------------------------------
+            # Individual DDM parameters
+            #---------------------------------------------------------------
+            drift[i,k] ~ dnorm(mu_nu[i,k], pow(sigma_nu, -2))
+            bound[i,k] ~ dnorm(mu_alpha[i,k], pow(sigma_alpha, -2)) T(0.1, 3.0)
+            nondt[i,k] ~ dnorm(mu_tau[i,k], pow(sigma_tau, -2)) T(0.05, )
+            
+            #---------------------------------------------------------------
+            # EZ-DDM Forward Equations
+            #---------------------------------------------------------------
+            ey[i,k] <- exp(-bound[i,k] * drift[i,k])
+            Pc[i,k] <- 1 / (1 + ey[i,k])
+            MDT[i,k] <- (bound[i,k] / (2 * drift[i,k])) * (1 - ey[i,k]) / (1 + ey[i,k])
+            MRT[i,k] <- MDT[i,k] + nondt[i,k]
+            PRT[i,k] <- 2 * pow(drift[i,k], 3) / bound[i,k] * 
+                        pow(ey[i,k] + 1, 2) / 
+                        (2 * -bound[i,k] * drift[i,k] * ey[i,k] - pow(ey[i,k], 2) + 1)
+            
+            #---------------------------------------------------------------
+            # Likelihood: Sampling distributions for summary statistics
+            #---------------------------------------------------------------
+            C[i,k] ~ dbin(Pc[i,k], J[i,k])
+            meanRT[i,k] ~ dnorm(MRT[i,k], PRT[i,k] * J[i,k])
+            varRT[i,k] ~ dnorm(1/PRT[i,k], 0.5 * (J[i,k] - 1) * pow(PRT[i,k], 2))
+        }
+    }
+}
+"
+
+# Write model to file
+dir.create(dirname(modelFile), showWarnings = FALSE, recursive = TRUE)
+writeLines(model_code, modelFile)
+```
+
+## Design matrix automatization
+
+The model code above is written so that `P` and `X` values can be changed **without rewriting the model**. This is because...
+
+1. The model loops over `P` to specify priors for each coefficient
+
+```{r, eval=FALSE}
+for (p in 1:P_nu) {
+    beta_nu[p] ~ dnorm(prior_beta_nu[1, p], pow(prior_beta_nu[2, p], -2))
+}
+```
+
+In this case, the loop creates as many beta coefficients as specified by `P_nu`. If `P_nu = 2`, you get `beta_nu[1]` and `beta_nu[2]`. If `P_nu = 5`, you immediately get 5 coefficients with no code modification.
+
+2. The model uses `inprod()` to compute linear predictors
+
+```{r, eval=FALSE}
+mu_alpha[i,k] <- inprod(X_alpha[i, k, 1:P_alpha], beta_alpha[1:P_alpha])
+mu_tau[i,k]   <- inprod(X_tau[i, k, 1:P_tau], beta_tau[1:P_tau])
+```
+
+The `inprod()` function computes the inner product (dot product) of two vectors. The indexing `1:P_alpha` adapts to whatever value `P_alpha` has, so **this works for any number of predictors.**
+
+3. The model passes `P_nu`, `P_alpha`, `P_tau` and the design arrays `X_nu`, `X_alpha`, `X_tau` to JAGS as data, not hardcoded. For example, to add a second covariate to $\alpha$, you can set `P_alpha = 3` and `X_alpha[i,k,] = [1, x1, x2]`.
+
+# Run Simulations
+
+### Source Custom Functions
+
+```{r}
+#===============================================================================
+# Source custom functions from /src/
+#===============================================================================
+source(here("JAGS", "src", "generate_truePars.R"))
+source(here("JAGS", "src", "generate_trialData.R"))
+source(here("JAGS", "src", "calculate_sumStats.R"))
+source(here("JAGS", "src", "calculate_Rhat.R"))
+source(here("JAGS", "src", "plot_recovery.R"))
+source(here("JAGS", "src", "simulation_settings.R"))  
+```
+
+### Write custom function to run each simulation cell
+
+We define a custom function to run each simulation in the simulation study. 
+
+1. Generates individual true parameters, as appropriate for the design
+2. Generates trial-level data and computes summary statistics
+3. Builds the corresponding 3D design arrays
+4. Prepares priors and data for JAGS
+5. Runs the JAGS model
+6. Extracts and returns results
+
+This function is supported by the custom functions loaded above (stored in `/JAGS/src/`).
+
+```{r}
+run_one_simulation <- function(I, J, K, true_pars, modelFile,
+                                P_nu = 2, P_alpha = 2, P_tau = 1,
+                                n.chains = 4, n.iter = 5000, 
+                                n.burnin = 1000, n.thin = 1) {
+
+    # Condition dummy coding (0 for condition 1, 1 for condition 2, etc.)
+    cond_dummy <- 0:(K - 1)
+
+    #--------------------------------------------------------------------
+    # Step 1: Generate true parameters
+    #--------------------------------------------------------------------
+    true_result <- generate_truePars_condition(
+        n_sub      = I,
+        n_cond     = K,
+        drift_mean = true_pars$mu_nu,
+        drift_cond = true_pars$b1_nu,
+        drift_sd   = true_pars$sigma_nu,
+        slope_sd   = true_pars$sigma_v,
+        bound_mean = true_pars$mu_alpha,
+        bound_cov  = if (!is.null(true_pars$b_alpha)) true_pars$b_alpha else 0,
+        bound_sd   = true_pars$sigma_alpha,
+        nondt_mean = true_pars$mu_tau,
+        nondt_cond = if (!is.null(true_pars$b1_tau)) true_pars$b1_tau else 0,
+        nondt_sd   = true_pars$sigma_tau)
+    
+    # Extract components
+    # Data frame: subject, condition, drift, bound, non-decision time
+    pars_df <- true_result$pars           
+    # Data frame: subject, v (random slope), x (covariate)
+    rand_eff <- true_result$random_effects 
+    
+    #---------------------------------------------------------------------------
+    # Step 2: Generate trial-level data and compute summary statistics
+    #--------------------------------------------------------------------------- 
+    C_mat   <- matrix(NA, I, K) # Accuracy data
+    MRT_mat <- matrix(NA, I, K) # Mean RT data
+    VRT_mat <- matrix(NA, I, K) # Variance RT data
+    
+    for (i in 1:I) {
+        for (k in 1:K) {
+            # Get parameters for this subject x condition
+            row_idx <- which(pars_df$sub == i & pars_df$cond == (k - 1))
+            
+            # Generate trial-level data using /src/ function
+            trial_data <- sample_many_trials(
+                a = pars_df$bound[row_idx],
+                v = pars_df$drift[row_idx],
+                t = pars_df$nondt[row_idx],
+                n = J)
+            
+            # Compute summary statistics from trial data
+            C_mat[i, k]   <- sum(trial_data$accuracy)
+            MRT_mat[i, k] <- mean(trial_data$RT)
+            VRT_mat[i, k] <- var(trial_data$RT)
+        }
+    }
+    
+    #---------------------------------------------------------------------------
+    # Step 3: Build design arrays
+    #---------------------------------------------------------------------------
+    # Initialize design arrays
+    X_nu    <- array(NA, dim = c(I, K, P_nu))
+    X_alpha <- array(NA, dim = c(I, K, P_alpha))
+    X_tau   <- array(NA, dim = c(I, K, P_tau))
+    
+    # Fill design arrays
+    for (i in 1:I) {
+        for (k in 1:K) {
+            # X_nu: Intercept (+ condition dummy if P_nu > 1)
+            X_nu[i, k, ] <- if (P_nu == 1) 1 else c(1, cond_dummy[k])
+            
+            # X_alpha: Intercept (+ covariate if P_alpha > 1)
+            X_alpha[i, k, ] <- if (P_alpha == 1) 1 else c(1, rand_eff$x[i])
+            
+            # X_tau: Intercept (+ condition dummy if P_tau > 1)
+            X_tau[i, k, ] <- if (P_tau == 1) 1 else c(1, cond_dummy[k])
+        }
+    }
+    
+    #---------------------------------------------------------------------------
+    # Step 4: Set priors 
+    #---------------------------------------------------------------------------
+    prior_beta_nu <- if (P_nu == 1) {
+        matrix(c(0.5, 0.5), nrow = 2)
+    } else {
+        matrix(c(0.5, 0.2, 0.5, 0.5), nrow = 2, byrow = TRUE)
+    }
+    
+    prior_beta_alpha <- if (P_alpha == 1) {
+        matrix(c(1.5, 0.5), nrow = 2)
+    } else {
+        matrix(c(1.5, 0.0, 0.5, 0.5), nrow = 2, byrow = TRUE)
+    }
+    
+    prior_beta_tau <- if (P_tau == 1) {
+        matrix(c(0.3, 0.2), nrow = 2)
+    } else {
+        matrix(c(0.3, 0.05, 0.2, 0.2), nrow = 2, byrow = TRUE) 
+    }
+    
+    prior_sigma_nu    <- c(0.3, 0.3)
+    prior_sigma_alpha <- c(0.3, 0.3)
+    prior_sigma_tau   <- c(0.15, 0.15)
+    prior_sigma_v     <- c(0.2, 0.2)
+    
+    #---------------------------------------------------------------------------
+    # Step 5: Prepare data for JAGS
+    #---------------------------------------------------------------------------
+    J_mat <- matrix(J, I, K)
+    
+    data_toJAGS <- list(I = I, K = K,
+                        P_nu = P_nu, P_alpha = P_alpha, P_tau = P_tau,
+                        J = J_mat, C = C_mat,
+                        meanRT = MRT_mat, varRT = VRT_mat,
+                        X_nu = X_nu, X_alpha = X_alpha, X_tau = X_tau,
+                        prior_beta_nu = prior_beta_nu,
+                        prior_beta_alpha = prior_beta_alpha,
+                        prior_beta_tau = prior_beta_tau,
+                        prior_sigma_nu = prior_sigma_nu,
+                        prior_sigma_alpha = prior_sigma_alpha,
+                        prior_sigma_tau = prior_sigma_tau,
+                        prior_sigma_v = prior_sigma_v)
+    
+    #---------------------------------------------------------------------------
+    # Step 6: Run JAGS
+    #---------------------------------------------------------------------------
+    parameters <- c('beta_nu', 'beta_alpha', 'beta_tau',
+                    'sigma_nu', 'sigma_alpha', 'sigma_tau', 'sigma_v',
+                    'drift', 'bound', 'nondt', 'v')
+    
+    myinits <- replicate(n.chains, list(
+                beta_nu    = if (P_nu == 1) 0.5 else c(0.5, 0.2),
+                beta_alpha = if (P_alpha == 1) 1.5 else c(1.5, 0),
+                beta_tau   = if (P_tau == 1) 0.3 else c(0.3, 0.05),
+                sigma_nu = 0.2,
+                sigma_alpha = 0.3,
+                sigma_tau = 0.15,
+                sigma_v = 0.2), simplify = FALSE)
+    
+    samples <- jags(data = data_toJAGS,
+                    parameters.to.save = parameters,
+                    model.file = modelFile,
+                    n.chains = n.chains, n.iter = n.iter,
+                    n.burnin = n.burnin, n.thin = n.thin,
+                    DIC = FALSE, inits = myinits)
+    
+    #---------------------------------------------------------------------------
+    # Step 7: Extract results
+    #---------------------------------------------------------------------------
+    sims <- samples$BUGSoutput$sims.matrix
+            
+    #---------------------------------------------------------------------------
+    # 7a. Population-level estimates (using helper functions from /src/)
+    #---------------------------------------------------------------------------
+    pop_est <- build_pop_estimates(sims, P_nu, P_alpha, P_tau)
+    pop_true <- build_pop_true(true_pars, P_nu, P_alpha, P_tau)
+    
+    #---------------------------------------------------------------------------
+    # 7b. Individual-level estimates (drift, bound, nondt by subject x condition)
+    #---------------------------------------------------------------------------
+    # Initialize storage for individual estimates
+    drift_est <- matrix(NA, I, K)
+    bound_est <- matrix(NA, I, K)
+    nondt_est <- matrix(NA, I, K)
+    
+    for (i in 1:I) {
+        for (k in 1:K) {
+            drift_est[i, k] <- mean(sims[, paste0("drift[", i, ",", k, "]")])
+            bound_est[i, k] <- mean(sims[, paste0("bound[", i, ",", k, "]")])
+            nondt_est[i, k] <- mean(sims[, paste0("nondt[", i, ",", k, "]")])
+        }
+    }
+    
+    # Random slope estimates (v[i])
+    v_est <- numeric(I)
+    for (i in 1:I) {
+        v_est[i] <- mean(sims[, paste0("v[", i, "]")])
+    }
+     # Intercept + condition effect
+    # True individual values (from pars_df)
+    drift_true <- matrix(pars_df$drift, nrow = I, ncol = K, byrow = TRUE)
+    bound_true <- matrix(pars_df$bound, nrow = I, ncol = K, byrow = TRUE)
+    nondt_true <- matrix(pars_df$nondt, nrow = I, ncol = K, byrow = TRUE)
+    v_true <- rand_eff$v
+    
+    # Build individual-level results data frame
+    results_indiv <- data.frame(
+            sub = rep(1:I, times = K),
+            condition = rep(0:(K-1), each = I),
+            true_drift = as.vector(drift_true),
+            est_drift  = as.vector(drift_est),
+            true_bound = as.vector(bound_true),
+            est_bound  = as.vector(bound_est),
+            true_nondt = as.vector(nondt_true),
+            est_nondt  = as.vector(nondt_est))
+    
+    # Random slope results (one per subject)
+    results_v <- data.frame(sub = 1:I, true_v = v_true,
+                            est_v = v_est)
+    
+    #---------------------------------------------------------------------------
+    # 7c. Convergence diagnostics (using helper function from /src/)
+    #---------------------------------------------------------------------------
+    pop_par_names <- get_rhat_params(P_nu, P_alpha, P_tau)
+    rhat_vals <- sapply(pop_par_names, function(p) getRhat(samples$BUGSoutput$sims.array[, , p]))
+    
+    return(list(pop_est = pop_est,
+                pop_true = pop_true,
+                results_indiv = results_indiv,
+                results_v = results_v,
+                rhat_max = max(rhat_vals),
+                converged = max(rhat_vals) < 1.05,
+                I = I, J = J))
+}
+```
+
+**Notes:**
+
+- `P_nu`, `P_alpha`, `P_tau` are optional arguments (defaults: 2, 2, 1 matching STAN's design on file `working simulation + output/sim_and_rec_model2_ncp`)
+- Helper functions in `/src/simulation_settings.R` handle parameter extraction for any P values
+- The same JAGS model file works for any design. We only need to change the data passed to the function.
+
+## Run full simulation study
+
+We check if cached results exist, and if not, run the full simulation study.
+
+```{r}
+# Results file:
+resultsFile <- here("JAGS", "demos", "simulation-study", "design_matrix",
+                    "simulation_results.RData")
+
+# IF the results file exists, load the results
+if(file.exists(resultsFile)) {
+    load(resultsFile)
+# If the results file does not exist, run the simulations
+} else {
+    results_list <- vector("list", nrow(sim_grid))
+    
+    for (r in 1:nrow(sim_grid)) {        
+        set.seed(r)
+        
+        cat("Running simulation", r, "of", nrow(sim_grid), 
+            "| I =", sim_grid$I[r], "| J =", sim_grid$J[r], "\n")
+        
+        results_list[[r]] <- run_one_simulation(
+            I = sim_grid$I[r], J = sim_grid$J[r],
+            K = K, true_pars = true_pars, modelFile = modelFile)
+    }
+
+    # Create the results file
+    save(results_list, sim_grid, true_pars, file = resultsFile)
+}
+```
+
+## Parameter Recovery Results
+
+### Aggregate results across all cells
+
+```{r}
+#-------------------------------------------------------------------------------
+# Population-level results
+#-------------------------------------------------------------------------------
+pop_results <- do.call(rbind, lapply(seq_along(results_list), function(r) {
+    res <- results_list[[r]]
+    data.frame(sim = r, I = res$I, J = res$J,
+               param = names(res$pop_est),
+               true_value = res$pop_true,
+               estimate = res$pop_est,
+               converged = res$converged)
+}))
+
+#-------------------------------------------------------------------------------
+# Individual-level results
+#-------------------------------------------------------------------------------
+results_indiv_all <- do.call(rbind, lapply(seq_along(results_list), function(r) {
+    res <- results_list[[r]]
+    if (!res$converged) return(NULL)  # Skip non-converged runs
+    
+    df <- res$results_indiv
+    df$sim <- r
+    df$I <- res$I
+    df$J <- res$J
+    df
+}))
+
+#-------------------------------------------------------------------------------
+# Random slope results (v[i])
+#-------------------------------------------------------------------------------
+results_v_all <- do.call(rbind, lapply(seq_along(results_list), function(r) {
+    res <- results_list[[r]]
+    if (!res$converged) return(NULL)
+    
+    df <- res$results_v
+    df$sim <- r
+    df$I <- res$I
+    df$J <- res$J
+    # Add population mean to get total condition effect (as done by Anne)
+    df$true_v_total <- df$true_v + true_pars$b1_nu
+    df$est_v_total <- df$est_v  # Model estimates total effect directly
+    df
+}))
+
+#-------------------------------------------------------------------------------
+# Convergence summary
+#-------------------------------------------------------------------------------
+cat("Failed:", sum(!sapply(results_list, function(x) x$converged)), "\n")
+```
+
+### Individual-level parameter recovery
+
+```{r, fig.width=12, fig.height=10}
+# Drift rate recovery
+plot_recovery_faceted(results_indiv_all, "true_drift", "est_drift",
+                       "JAGS Design Matrix | Drift Rate Recovery",
+                       "True drift", "Estimated drift", 
+                       I_vals, J_vals, by_condition = TRUE)
+
+# Boundary separation recovery
+plot_recovery_faceted(results_indiv_all, "true_bound", "est_bound",
+                       "JAGS Design Matrix | Boundary Separation Recovery",
+                       "True boundary", "Estimated boundary", 
+                       I_vals, J_vals, by_condition = TRUE)
+
+# Non-decision time recovery
+plot_recovery_faceted(results_indiv_all, "true_nondt", "est_nondt",
+                       "JAGS Design Matrix | Non-Decision Time Recovery",
+                       "True non-decision time", "Estimated non-decision time", 
+                       I_vals, J_vals, by_condition = TRUE)
+
+# Random slope recovery
+plot_recovery_faceted(results_v_all, "true_v", "est_v",
+                       "JAGS Design Matrix | Random Slope v[i] Recovery",
+                       "True v", "Estimated v", 
+                       I_vals, J_vals, by_condition = FALSE)
+```
+
+There is a hidden r chunk in this .Rmd file that saves all the individual-level plots to `JAGS/demos/simulation-study/design_matrix/figures` (the directory is created if it doesn't exist).
+
+```{r, echo=FALSE}
+plotDir <- here("JAGS", "demos", "simulation-study", "design_matrix", "figures")
+
+# Create directory only if it doesn't exist
+if (!dir.exists(plotDir)) {
+    dir.create(plotDir, recursive = TRUE)
+}
+
+# Save all individual-level recovery plots
+save_recovery_plot("recovery_drift", plotDir, results_indiv_all, 
+                    "true_drift", "est_drift",
+                    "JAGS Design Matrix | Drift Rate Recovery",
+                    "True drift", "Estimated drift", 
+                    I_vals, J_vals, by_condition = TRUE)
+
+save_recovery_plot("recovery_bound", plotDir, results_indiv_all, 
+                    "true_bound", "est_bound",
+                    "JAGS Design Matrix | Boundary Separation Recovery",
+                    "True boundary", "Estimated boundary", 
+                    I_vals, J_vals, by_condition = TRUE)
+
+save_recovery_plot("recovery_nondt", plotDir, results_indiv_all, 
+                    "true_nondt", "est_nondt",
+                    "JAGS Design Matrix | Non-Decision Time Recovery",
+                    "True non-decision time", "Estimated non-decision time", 
+                    I_vals, J_vals, by_condition = TRUE)
+
+save_recovery_plot("recovery_v", plotDir, results_v_all, 
+                    "true_v", "est_v",
+                    "JAGS Design Matrix | Random Slope v[i] Recovery",
+                    "True v", "Estimated v", 
+                    I_vals, J_vals, by_condition = FALSE)
+
+cat("Plots saved to:", plotDir, "\n")
+```
+
+## Population-Level Recovery
+
+As a precaution, we make sure to only plot the population-level results for simulations that converged.
+```{r}
+pop_converged <- pop_results[pop_results$converged, ]
+```
+
+```{r, fig.width=12, fig.height=8}
+# Define parameter groups and colors
+beta_params <- c("beta_nu_1", "beta_nu_2", "beta_alpha_1", "beta_alpha_2", "beta_tau_1")
+sigma_params <- c("sigma_nu", "sigma_alpha", "sigma_tau", "sigma_v")
+beta_cols <- c("red", "blue", "darkgreen", "purple", "orange")
+sigma_cols <- c("red", "blue", "darkgreen", "purple")
+
+# Regression coefficients (beta parameters)
+plot_recovery_population(pop_converged, beta_params, beta_cols,
+                          "Population Regression Coefficients: True vs Estimated",
+                          I_vals, J_vals)
+
+# Variance components (sigma parameters)
+plot_recovery_population(pop_converged, sigma_params, sigma_cols,
+                          "Variance Components: True vs Estimated",
+                          I_vals, J_vals)
+```
+
+Once again, there is a hidden r chunk in this .Rmd file that saves all the population-level plots to `JAGS/demos/simulation-study/design_matrix/figures`.
+
+```{r, echo=FALSE}
+save_recovery_population("recovery_beta", plotDir, pop_converged,
+                          beta_params, beta_cols,
+                          "Population Regression Coefficients: True vs Estimated",
+                          I_vals, J_vals)
+
+save_recovery_population("recovery_sigma", plotDir, pop_converged,
+                          sigma_params, sigma_cols,
+                          "Variance Components: True vs Estimated",
+                          I_vals, J_vals)
+
+cat("Population plots saved to:", plotDir, "\n")
+```
+
+## Summary Tables
+
+```{r}
+# Get unique design cells
+design_cells <- unique(results_indiv_all[, c("I", "J")])
+
+#####################################
+# Compute correlations for each cell
+#####################################
+
+# Initialize the data frame to store the correlations
+indiv_cors <- data.frame(I = integer(), J = integer(),
+                        r_drift = numeric(), r_bound = numeric(),
+                        r_nondt = numeric(), n_obs = integer())
+# Fill the data frame with the correlations for each design cell
+for (r in 1:nrow(design_cells)) {
+    i_val <- design_cells$I[r]
+    j_val <- design_cells$J[r]
+    idx <- results_indiv_all$I == i_val & results_indiv_all$J == j_val
+    sub_data <- results_indiv_all[idx, ]
+    
+    indiv_cors <- rbind(indiv_cors, data.frame(I = i_val, J = j_val,
+                        r_drift = cor(sub_data$true_drift, sub_data$est_drift, use = "complete.obs"),
+                        r_bound = cor(sub_data$true_bound, sub_data$est_bound, use = "complete.obs"),
+                        r_nondt = cor(sub_data$true_nondt, sub_data$est_nondt, use = "complete.obs"),
+                        n_obs = nrow(sub_data)))
+}
+
+# Show the correlations in a table
+knitr::kable(indiv_cors, digits = 3,
+             caption = "Individual-Level Correlations (True vs Estimated)")
+
+#===============================================================================
+# Bias and RMSE (Estimation at the population level)
+#===============================================================================
+# Get unique combinations
+combos <- unique(pop_converged[, c("I", "J", "param")])
+
+# Initialize the data frame to store the bias and RMSE
+bias_summary <- data.frame(I = integer(), J = integer(),
+                        param = character(),
+                        true = numeric(),
+                        mean_est = numeric(),
+                        mean_bias = numeric(),
+                        rmse = numeric())
+
+# Fill the data frame with the bias and RMSE for each design cell
+for (r in 1:nrow(combos)) {
+    i_val <- combos$I[r]
+    j_val <- combos$J[r]
+    p_val <- combos$param[r]
+    
+    idx <- pop_converged$I == i_val & pop_converged$J == j_val & pop_converged$param == p_val
+    sub_data <- pop_converged[idx, ]
+    
+    bias_summary <- rbind(bias_summary, data.frame(
+        I = i_val, J = j_val, param = p_val,
+        true = mean(sub_data$true_value),
+        mean_est = mean(sub_data$estimate),
+        mean_bias = mean(sub_data$estimate - sub_data$true_value),
+        rmse = sqrt(mean((sub_data$estimate - sub_data$true_value)^2))
+    ))
+}
+
+# Show the bias and RMSE in a table
+knitr::kable(bias_summary, digits = 3,
+             caption = "Population Parameter Recovery: Bias and RMSE by Design Cell")
+```
+
+# Simulation 2: Condition Effect on Non-Decision Time
+
+As mentioned above, the JAGS model is flexible enough to accommodate different designs. Here, we present a second simulation study where we change the design to include a condition effect on non-decision time, but use the same JAGS model to recover the parameters.
+
+| Parameter | Simulation 1 | Simulation 2 |
+|-----------|--------------|--------------|
+| $P_\nu$ | 2 (intercept + condition) | 2 (unchanged) |
+| $P_\alpha$ | 2 (intercept + covariate) | 2 (unchanged) |
+| $P_\tau$ | 1 (intercept only) | **2 (intercept + condition)** |
+
+To make this report more concise, I made sure the `run_one_simulation()` function could be used to accomodate both simulation studies. 
+
+Of course, however, what we truly care to demonstrate is the flexibility of the JAGS model to accommodate different designs. In this case, the only change needed is passing `P_tau = 2` and including a true condition effect `b1_tau` in the true parameter list. The JAGS model adapts automatically via `inprod()` and the `1:P_tau` loops.
+
+### Update True Parameters
+```{r}
+# Same population values as Simulation 1, plus a condition effect on tau
+true_pars_sim2 <- true_pars
+true_pars_sim2$b1_tau <- 0.05   # Condition effect on non-decision time
+```
+
+### Run Simulation Study 2
+
+Same $2 \times 2 \times 3 = 12$ design cells as Simulation 1.
+
+```{r}
+resultsFile_sim2 <- here("JAGS", "demos", "simulation-study", "design_matrix",
+                         "simulation_results_tauCond.RData")
+
+# Only run if the results file does not exist
+if (file.exists(resultsFile_sim2)) {    
+    load(resultsFile_sim2)    
+} else {    
+    results_list_sim2 <- vector("list", nrow(sim_grid))
+    
+    for (r in 1:nrow(sim_grid)) {
+        set.seed(r + 1000)  # Distinct seeds from Simulation 1
+        
+        cat("Sim 2 | Running", r, "of", nrow(sim_grid),
+            "| I =", sim_grid$I[r], "| J =", sim_grid$J[r], "\n")
+        
+        # Key change: P_tau = 2
+        results_list_sim2[[r]] <- run_one_simulation(
+            I = sim_grid$I[r], J = sim_grid$J[r], K = K,
+            true_pars = true_pars_sim2, modelFile = modelFile,
+            P_nu = 2, P_alpha = 2, P_tau = 2)
+    }
+    
+    save(results_list_sim2, sim_grid, true_pars_sim2, file = resultsFile_sim2)
+}
+```
+
+### Aggregate Results (Simulation 2)
+
+```{r}
+#-------------------------------------------------------------------------------
+# Population-level results
+#-------------------------------------------------------------------------------
+pop_results_sim2 <- do.call(rbind, lapply(seq_along(results_list_sim2), function(r) {
+    res <- results_list_sim2[[r]]
+    data.frame(sim = r, I = res$I, J = res$J,
+               param = names(res$pop_est),
+               true_value = res$pop_true,
+               estimate = res$pop_est,
+               converged = res$converged)
+}))
+
+#-------------------------------------------------------------------------------
+# Individual-level results
+#-------------------------------------------------------------------------------
+results_indiv_sim2 <- do.call(rbind, lapply(seq_along(results_list_sim2), function(r) {
+    res <- results_list_sim2[[r]]
+    if (!res$converged) return(NULL)
+    
+    df <- res$results_indiv
+    df$sim <- r
+    df$I <- res$I
+    df$J <- res$J
+    df
+}))
+
+#-------------------------------------------------------------------------------
+# Random slope results
+#-------------------------------------------------------------------------------
+results_v_sim2 <- do.call(rbind, lapply(seq_along(results_list_sim2), function(r) {
+    res <- results_list_sim2[[r]]
+    if (!res$converged) return(NULL)
+    
+    df <- res$results_v
+    df$sim <- r
+    df$I <- res$I
+    df$J <- res$J
+    df$true_v_total <- df$true_v + true_pars_sim2$b1_nu
+    df$est_v_total <- df$est_v
+    df
+}))
+```
+
+```{r}
+sum(!sapply(results_list_sim2, function(x) x$converged))
+```
+
+We find that `r sum(!sapply(results_list_sim2, function(x) x$converged))` simulations failed to converge.
+
+## Individual-level Recovery plots
+
+```{r, fig.width=12, fig.height=10}
+plot_recovery_faceted(results_indiv_sim2, "true_drift", "est_drift",
+                       "Sim 2 (P_tau=2) | Drift Rate Recovery",
+                       "True drift", "Estimated drift",
+                       I_vals, J_vals, by_condition = TRUE)
+
+plot_recovery_faceted(results_indiv_sim2, "true_bound", "est_bound",
+                       "Sim 2 (P_tau=2) | Boundary Separation Recovery",
+                       "True boundary", "Estimated boundary",
+                       I_vals, J_vals, by_condition = TRUE)
+
+plot_recovery_faceted(results_indiv_sim2, "true_nondt", "est_nondt",
+                       "Sim 2 (P_tau=2) | Non-Decision Time Recovery",
+                       "True non-decision time", "Estimated non-decision time",
+                       I_vals, J_vals, by_condition = TRUE)
+
+plot_recovery_faceted(results_v_sim2, "true_v", "est_v",
+                       "Sim 2 (P_tau=2) | Random Slope v[i] Recovery",
+                       "True v", "Estimated v",
+                       I_vals, J_vals, by_condition = FALSE)
+```
+
+```{r, echo=FALSE}
+plotDir_sim2 <- here("JAGS", "demos", "simulation-study", "design_matrix", "figures_tauCond")
+if (!dir.exists(plotDir_sim2)) dir.create(plotDir_sim2)
+
+save_recovery_plot("recovery_drift", plotDir_sim2, results_indiv_sim2,
+                    "true_drift", "est_drift",
+                    "Sim 2 (P_tau=2) | Drift Rate Recovery",
+                    "True drift", "Estimated drift",
+                    I_vals, J_vals, by_condition = TRUE)
+
+save_recovery_plot("recovery_bound", plotDir_sim2, results_indiv_sim2,
+                    "true_bound", "est_bound",
+                    "Sim 2 (P_tau=2) | Boundary Separation Recovery",
+                    "True boundary", "Estimated boundary",
+                    I_vals, J_vals, by_condition = TRUE)
+
+save_recovery_plot("recovery_nondt", plotDir_sim2, results_indiv_sim2,
+                    "true_nondt", "est_nondt",
+                    "Sim 2 (P_tau=2) | Non-Decision Time Recovery",
+                    "True non-decision time", "Estimated non-decision time",
+                    I_vals, J_vals, by_condition = TRUE)
+
+save_recovery_plot("recovery_v", plotDir_sim2, results_v_sim2,
+                    "true_v", "est_v",
+                    "Sim 2 (P_tau=2) | Random Slope v[i] Recovery",
+                    "True v", "Estimated v",
+                    I_vals, J_vals, by_condition = FALSE)
+
+cat("Simulation 2 plots saved to:", plotDir_sim2, "\n")
+```
+
+### Population-level Recovery plots
+
+```{r}
+pop_converged_sim2 <- pop_results_sim2[pop_results_sim2$converged, ]
+
+beta_params_sim2 <- c("beta_nu_1", "beta_nu_2", "beta_alpha_1", "beta_alpha_2",
+                      "beta_tau_1", "beta_tau_2")
+sigma_params_sim2 <- c("sigma_nu", "sigma_alpha", "sigma_tau", "sigma_v")
+beta_cols_sim2 <- c("red", "blue", "darkgreen", "purple", "orange", "brown")
+sigma_cols_sim2 <- c("red", "blue", "darkgreen", "purple")
+```
+
+```{r, fig.width=12, fig.height=8}
+plot_recovery_population(pop_converged_sim2, beta_params_sim2, beta_cols_sim2,
+                          "Sim 2 | Population Regression Coefficients: True vs Estimated",
+                          I_vals, J_vals)
+
+plot_recovery_population(pop_converged_sim2, sigma_params_sim2, sigma_cols_sim2,
+                          "Sim 2 | Variance Components: True vs Estimated",
+                          I_vals, J_vals)
+```
+
+```{r, echo=FALSE}
+save_recovery_population("recovery_beta", plotDir_sim2, pop_converged_sim2,
+                          beta_params_sim2, beta_cols_sim2,
+                          "Sim 2 | Population Regression Coefficients: True vs Estimated",
+                          I_vals, J_vals)
+
+save_recovery_population("recovery_sigma", plotDir_sim2, pop_converged_sim2,
+                          sigma_params_sim2, sigma_cols_sim2,
+                          "Sim 2 | Variance Components: True vs Estimated",
+                          I_vals, J_vals)
+
+cat("Simulation 2 population plots saved to:", plotDir_sim2, "\n")
+```
+
+## Summary Tables (Simulation 2)
+
+```{r}
+#===============================================================================
+# Individual-level correlations by design cell
+#===============================================================================
+design_cells_sim2 <- unique(results_indiv_sim2[, c("I", "J")])
+
+indiv_cors_sim2 <- data.frame(I = integer(), J = integer(),
+    r_drift = numeric(), r_bound = numeric(), r_nondt = numeric(),
+    n_obs = integer())
+
+for (r in 1:nrow(design_cells_sim2)) {
+    i_val <- design_cells_sim2$I[r]
+    j_val <- design_cells_sim2$J[r]
+    idx <- results_indiv_sim2$I == i_val & results_indiv_sim2$J == j_val
+    sub_data <- results_indiv_sim2[idx, ]
+    
+    indiv_cors_sim2 <- rbind(indiv_cors_sim2, data.frame(
+        I = i_val, J = j_val,
+        r_drift = cor(sub_data$true_drift, sub_data$est_drift, use = "complete.obs"),
+        r_bound = cor(sub_data$true_bound, sub_data$est_bound, use = "complete.obs"),
+        r_nondt = cor(sub_data$true_nondt, sub_data$est_nondt, use = "complete.obs"),
+        n_obs = nrow(sub_data)
+    ))
+}
+
+knitr::kable(indiv_cors_sim2, digits = 3,
+             caption = "Simulation 2: Individual-Level Correlations (True vs Estimated)")
+
+#===============================================================================
+# Population-level bias and RMSE
+#===============================================================================
+combos_sim2 <- unique(pop_converged_sim2[, c("I", "J", "param")])
+
+bias_summary_sim2 <- data.frame(
+    I = integer(), J = integer(), param = character(),
+    true = numeric(), mean_est = numeric(),
+    mean_bias = numeric(), rmse = numeric()
+)
+
+for (r in 1:nrow(combos_sim2)) {
+    i_val <- combos_sim2$I[r]
+    j_val <- combos_sim2$J[r]
+    p_val <- combos_sim2$param[r]
+    
+    idx <- pop_converged_sim2$I == i_val & pop_converged_sim2$J == j_val &
+           pop_converged_sim2$param == p_val
+    sub_data <- pop_converged_sim2[idx, ]
+    
+    bias_summary_sim2 <- rbind(bias_summary_sim2, data.frame(
+        I = i_val, J = j_val, param = p_val,
+        true = mean(sub_data$true_value),
+        mean_est = mean(sub_data$estimate),
+        mean_bias = mean(sub_data$estimate - sub_data$true_value),
+        rmse = sqrt(mean((sub_data$estimate - sub_data$true_value)^2))
+    ))
+}
+
+knitr::kable(bias_summary_sim2, digits = 3,
+             caption = "Simulation 2: Population Parameter Recovery (Bias and RMSE)")
+```
+
+# Conclusion
+
+We ran two separate simulation studies with different design matrices, and used the **same JAGS model file** to retrieve posterior estimates. 
+
+- Simulation 1 included only one predictor of the nondt `P_tau = 1` (i.e. only intercept). 
+- Simulation 2 included two predictors of the nondt `P_tau = 2` (i.e. intercept + condition dummy)
+- Both simulation studies differ in the design array $X_\tau$ 
+
+Across both simulations, using the same JAGS model resulted in appropriate parameter recovery results.
