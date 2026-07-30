@@ -1,0 +1,827 @@
+---
+title: "The EZ Bayesian Hierarchical DDM (EZBHDDM)"
+author: "Adriana F. Chávez De la Peña"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    self_contained: true
+    thumbnails: false
+    lightbox: true
+    gallery: true
+    cards: false
+    highlight: tango
+    fig_width: 12 
+    fig_height: 8 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rmdformats)
+library(here)
+```
+# Background
+
+### The Drift Diffusion Model
+
+The Drift Diffusion Model (DDM) is a process model that describes the choices and response times (RTs) observed in binary decision tasks as the result of a latent evidence accumulation process. In its simplest form, the model uses three parameters to describe this process: a drift rate, a boundary separation, and a non-decision time (described below), all of which have been shown to correlate with relevant aspects of the experimental design.
+
+- **Non-decision time**: Captures a constant time offset to the RT to account that is attributed to processes other than the decision process itself (e.g., motor response time, perceptual processing time, etc.). 
+- **Boundary separation**: Captures the distance between the two opposite boundaries capturing the two possible choices. This parameter has been shown to describe the accuracy/speed trade-off in the decision process (i.e., lower boundary separation leads to faster responses but lower accuracy, and vice versa).
+- **Drift rate**: Captures the average step size and direction of the evidence acumulation process towards either of the two boundaries. This parameter has been shown to correlate with the task difficulty (i.e., easier tasks have higher drift rates, and vice versa).
+
+### The EZ-DDM
+
+
+
+# A Bayesian hierarchical EZ-DDM implementation
+
+In 2025, Chavez De la Peña and Vandekerckhove (2025) introduced a Bayesian implementation of the EZ-DDM that allows for hierarchical and metaregression structures, 
+
+### JAGS base model
+
+```{r}
+modelFile <- here("JAGS", "basic_model.bug")
+
+model <- write("
+model {
+    #===================================================================
+    # HIERARCHICAL PRIORS: Population-level parameters
+    #===================================================================
+    # Population means
+    drift_mean ~ dnorm(0.50, pow(0.50, -2))
+    bound_mean ~ dnorm(1.50, pow(0.20, -2)) T(0.10, 3.00)
+    nondt_mean ~ dnorm(0.30, pow(0.10, -2)) T(0.05, )
+    
+    # Population standard deviations (between-subject variability)
+    drift_sd ~ dunif(0.01, 1.00)
+    bound_sd ~ dunif(0.01, 0.50)
+    nondt_sd ~ dunif(0.01, 0.20)
+
+    #===================================================================
+    # INDIVIDUAL PARAMETERS AND LIKELIHOOD
+    #===================================================================
+    for (p in 1:N) {
+        
+        #---------------------------------------------------------------
+        # Individual DDM parameters drawn from hierarchical distributions
+        #---------------------------------------------------------------
+        drift[p] ~ dnorm(drift_mean, pow(drift_sd, -2))
+        bound[p] ~ dnorm(bound_mean, pow(bound_sd, -2)) T(0.10, 3.00)
+        nondt[p] ~ dnorm(nondt_mean, pow(nondt_sd, -2)) T(0.05, )
+        
+        #---------------------------------------------------------------
+        # EZ-DDM Forward Equations: Parameters -> Expected summary stats
+        #---------------------------------------------------------------
+        # Intermediate term
+        ey[p] <- exp(-bound[p] * drift[p])
+        
+        # Expected proportion correct
+        Pc[p] <- 1 / (1 + ey[p])
+        
+        # Expected mean decision time
+        MDT[p] <- (bound[p] / (2 * drift[p])) * (1 - ey[p]) / (1 + ey[p])
+        
+        # Expected mean reaction time (decision time + non-decision time)
+        MRT[p] <- MDT[p] + nondt[p]
+        
+        # RT precision (inverse variance)
+        PRT[p] <- 2 * pow(drift[p], 3) / bound[p] * 
+                  pow(ey[p] + 1, 2) / 
+                  (2 * -bound[p] * drift[p] * ey[p] - pow(ey[p], 2) + 1)
+        
+        #---------------------------------------------------------------
+        # Sampling Distributions: Likelihood of observed summary stats
+        #---------------------------------------------------------------
+        # Number correct ~ Binomial(nTrials, Pc)
+        correct[p] ~ dbin(Pc[p], nTrials[p])
+        
+        # Mean RT ~ Normal(MRT, precision = PRT * nTrials)
+        meanRT[p] ~ dnorm(MRT[p], PRT[p] * nTrials[p])
+        
+        # Variance of RT ~ Normal(VRT, precision from sampling distribution)
+        # Note: VRT = 1/PRT
+        varRT[p] ~ dnorm(1/PRT[p], 0.5 * (nTrials[p] - 1) * pow(PRT[p], 2))
+    }
+}
+", modelFile)
+```
+
+# Simulation studies: 
+
+We now present two short simulation studies to evaluate the parameter recovery of this hierarchical Bayesian EZ-DDM implementation.
+
+We will generate `K` datasets, each with `P` participants and `nTrials` trials. For each dataset, we will generate random individual-level parameters for all three model parameters $\nu_p$, $\alpha_p$, and $\tau_p$ from the same true population distributions (with fixed true parameters $\mu_\nu$, $\mu_\alpha$, $\mu_\tau$, $\sigma_\nu$, $\sigma_\alpha$, $\sigma_\tau$).
+
+```{r}
+# Number of participants
+P <- 20
+# Number of trials per participant
+nTrials <- 100
+# Number of datasets (simulation replications)
+K <- 100
+```
+
+```{r}
+#===============================================================================
+# True population parameters (FIXED across all K simulations)
+#===============================================================================
+true_pars <- list(
+    drift_mean = 0.50,   # Population mean drift rate
+    drift_sd   = 0.20,   # Between-subject SD of drift
+    bound_mean = 1.50,   # Population mean boundary separation
+    bound_sd   = 0.25,   # Between-subject SD of boundary
+    nondt_mean = 0.30,   # Population mean non-decision time
+    nondt_sd   = 0.05    # Between-subject SD of non-decision time
+)
+```
+
+## Simulation study 1: Trial-level data generation
+
+In this simulation study, we generate trial-level data by emulating the DDM random walk process, then compute summary statistics from those trials. This is the more rigorous approach that tests whether the EZ approximations hold for realistic data.
+
+### Source custom functions
+
+```{r, message=FALSE}
+# Source the custom functions for data generation
+source(here("JAGS", "src", "generate_trialData.R"))
+source(here("JAGS", "src", "calculate_sumStats.R"))
+```
+
+### Data generation
+
+```{r}
+#===============================================================================
+# Generate K datasets with trial-level data
+#===============================================================================
+
+# Initialize 3D array to store summary statistics
+# Dimensions: [P participants] x [5 columns] x [K datasets]
+# Columns: sub, nTrials, sum_correct, meanRT, varRT
+sumStats_trialLevel <- array(NA, dim = c(P, 5, K),
+                              dimnames = list(
+                                  participant = 1:P,
+                                  stat = c("sub", "nTrials", "sum_correct", "meanRT", "varRT"),
+                                  dataset = 1:K
+                              ))
+
+# Also store true individual parameters for recovery checks
+true_individual <- array(NA, dim = c(P, 3, K),
+                          dimnames = list(
+                              participant = 1:P,
+                              param = c("drift", "bound", "nondt"),
+                              dataset = 1:K
+                          ))
+```
+
+```{r}
+#===============================================================================
+# Generate or load simulated data
+#===============================================================================
+
+# File path for cached data
+dataFile <- here("JAGS", "demos", "simulation-study", "simplest_model", 
+                 paste0("simData_trialLevel_P", P, "_T", nTrials, "_K", K, ".RData"))
+
+# IF cached data exists, load them
+#####################################!!!
+if (file.exists(dataFile)) {
+    
+    load(dataFile)
+
+# ELSE, generate new data
+#####################################!!!    
+} else {
+    
+    # Initialize 3D array to store summary statistics
+    sumStats_trialLevel <- array(NA, dim = c(P, 5, K),
+                                  dimnames = list(
+                                      participant = 1:P,
+                                      stat = c("sub", "nTrials", "sum_correct", "meanRT", "varRT"),
+                                      dataset = 1:K
+                                  ))
+    
+    # Also store true individual parameters for recovery checks
+    true_individual <- array(NA, dim = c(P, 3, K),
+                              dimnames = list(
+                                  participant = 1:P,
+                                  param = c("drift", "bound", "nondt"),
+                                  dataset = 1:K
+                              ))
+    
+    # Loop over K datasets
+    for (k in 1:K) {
+        
+        # Set seed for reproducibility
+        set.seed(k)
+        
+        #-----------------------------------------------------------------------
+        # Step 1: Generate true individual parameters from hierarchical distributions
+        #-----------------------------------------------------------------------
+        drift_true <- rnorm(P, true_pars$drift_mean, true_pars$drift_sd)
+        
+        # Boundary: truncated to [0.1, 3.0]
+        bound_true <- numeric(P)
+        for (p in 1:P) {
+            repeat {
+                b <- rnorm(1, true_pars$bound_mean, true_pars$bound_sd)
+                if (b > 0.1 && b < 3.0) { bound_true[p] <- b; break }
+            }
+        }
+        
+        # Non-decision time: truncated to [0.05, Inf)
+        nondt_true <- numeric(P)
+        for (p in 1:P) {
+            repeat {
+                t <- rnorm(1, true_pars$nondt_mean, true_pars$nondt_sd)
+                if (t > 0.05) { nondt_true[p] <- t; break }
+            }
+        }
+        
+        # Store true individual parameters
+        true_individual[, "drift", k] <- drift_true
+        true_individual[, "bound", k] <- bound_true
+        true_individual[, "nondt", k] <- nondt_true
+        
+        #-----------------------------------------------------------------------
+        # Step 2: Generate trial-level data using DDM random walk emulation
+        #-----------------------------------------------------------------------
+        parameter_set <- list(
+            drift = drift_true,
+            bound = bound_true,
+            nondt = nondt_true
+        )
+        
+        trial_data <- sample_data(nPart = P, 
+                                   nTrials = nTrials, 
+                                   parameter_set = parameter_set,
+                                   prevent_zero_accuracy = TRUE)
+        
+        #-----------------------------------------------------------------------
+        # Step 3: Compute summary statistics from trial-level data
+        #-----------------------------------------------------------------------
+        sumstats <- getStatistics(trial_data)
+        
+        # Store in 3D array
+        sumStats_trialLevel[, "sub", k]         <- sumstats[, "sub"]
+        sumStats_trialLevel[, "nTrials", k]     <- nTrials
+        sumStats_trialLevel[, "sum_correct", k] <- sumstats[, "sum_correct"]
+        sumStats_trialLevel[, "meanRT", k]      <- sumstats[, "meanRT"]
+        sumStats_trialLevel[, "varRT", k]       <- sumstats[, "varRT"]
+        
+        # Progress indicator
+        if (k %% 10 == 0) cat("Dataset", k, "of", K, "complete\n")
+    }
+    
+    # Save to .RData file
+    dir.create(dirname(dataFile), showWarnings = FALSE, recursive = TRUE)
+    save(sumStats_trialLevel, true_individual, true_pars, P, nTrials, K,
+         file = dataFile)
+}
+```
+
+### Inspect generated data
+
+Let us validate the data generation process by inspecting the content of the summary statistics stored for each datasets
+
+```{r}
+# Print the first 6 rows of the first dataset
+print(head(sumStats_trialLevel[, , 1]))
+```
+
+Now, let us check the distribution of accuracy rates across all datasets.
+
+```{r, fig.width=10, fig.height=6}
+# Check distribution of accuracy rates across all datasets
+accuracy_rates <- sumStats_trialLevel[, "sum_correct", ] / nTrials
+hist(accuracy_rates)
+```
+
+The mean accuracy rate observed across all datasets is `r round(mean(accuracy_rates), 3)` with a standard deviation of `r round(sd(accuracy_rates), 3)` and a range of `r round(min(accuracy_rates), 3)` to `r round(max(accuracy_rates), 3)`.
+
+### Model implementation in JAGS
+
+We fit the hierarchical EZ-DDM to each of the K generated datasets and store the posterior estimates for parameter recovery analysis.
+
+```{r, message=FALSE}
+library(R2jags)
+source(here("JAGS", "src", "calculate_Rhat.R"))
+```
+
+```{r}
+#===============================================================================
+# Fit model or load cached results
+#===============================================================================
+
+# File path for cached results
+resultsFile <- here("JAGS", "demos", "simulation-study", "simplest_model",
+                    paste0("simResults_trialLevel_P", P, "_T", nTrials, "_K", K, ".RData"))
+
+# IF cached results exist, load them
+#####################################!!!
+if (file.exists(resultsFile)) {
+    
+    load(resultsFile)
+    
+# ELSE, fit the model to all K datasets
+} else {
+    
+    # JAGS sampling settings
+    n.chains  <- 4
+    n.iter    <- 5000
+    n.burnin  <- 1000
+    n.thin    <- 1
+    
+    # Parameters to monitor
+    parameters <- c('drift_mean', 'drift_sd', 'bound_mean', 'bound_sd', 
+                    'nondt_mean', 'nondt_sd', 'drift', 'bound', 'nondt')
+    
+    # Initialize storage arrays
+    pop_estimates <- array(NA, dim = c(6, K),
+                           dimnames = list(param = c("drift_mean", "drift_sd", 
+                                                     "bound_mean", "bound_sd", 
+                                                     "nondt_mean", "nondt_sd"),
+                                           dataset = 1:K))
+    
+    ind_estimates <- array(NA, dim = c(P, 3, K),
+                           dimnames = list(participant = 1:P,
+                                           param = c("drift", "bound", "nondt"),
+                                           dataset = 1:K))
+    
+    rhat_max <- numeric(K)
+    
+    # Fit model to all K datasets
+    for (k in 1:K) {
+        set.seed(k + 1000)
+        
+        # Prepare data for JAGS
+        data_toJAGS <- list(
+            N        = P,
+            nTrials  = rep(nTrials, P),
+            correct  = sumStats_trialLevel[, "sum_correct", k],
+            meanRT   = sumStats_trialLevel[, "meanRT", k],
+            varRT    = sumStats_trialLevel[, "varRT", k]
+        )
+        
+        # Initial values
+        myinits <- replicate(n.chains, list(
+            drift = rnorm(P, 0.5, 0.1),
+            bound = runif(P, 1.0, 2.0),
+            nondt = runif(P, 0.2, 0.4)
+        ), simplify = FALSE)
+        
+        # Run JAGS
+        samples <- jags(data = data_toJAGS,
+                        parameters.to.save = parameters,
+                        model.file = modelFile,
+                        n.chains = n.chains, n.iter = n.iter,
+                        n.burnin = n.burnin, n.thin = n.thin,
+                        DIC = FALSE, inits = myinits)
+        
+        # Extract posterior means
+        sims <- samples$BUGSoutput$sims.matrix
+        pop_estimates["drift_mean", k] <- mean(sims[, "drift_mean"])
+        pop_estimates["drift_sd", k]   <- mean(sims[, "drift_sd"])
+        pop_estimates["bound_mean", k] <- mean(sims[, "bound_mean"])
+        pop_estimates["bound_sd", k]   <- mean(sims[, "bound_sd"])
+        pop_estimates["nondt_mean", k] <- mean(sims[, "nondt_mean"])
+        pop_estimates["nondt_sd", k]   <- mean(sims[, "nondt_sd"])
+        
+        for (p in 1:P) {
+            ind_estimates[p, "drift", k] <- mean(sims[, paste0("drift[", p, "]")])
+            ind_estimates[p, "bound", k] <- mean(sims[, paste0("bound[", p, "]")])
+            ind_estimates[p, "nondt", k] <- mean(sims[, paste0("nondt[", p, "]")])
+        }
+        
+        # Convergence check
+        rhats <- apply(samples$BUGSoutput$sims.array[, , 1:6], 3, getRhat)
+        rhat_max[k] <- max(rhats)
+        
+        if (k %% 10 == 0) cat("Dataset", k, "/", K, "| Max Rhat:", round(rhat_max[k], 3), "\n")
+    }
+    
+    # Save results
+    save(pop_estimates, ind_estimates, rhat_max, n.chains, n.iter, n.burnin, n.thin,
+         file = resultsFile)
+}
+```
+
+```{r}
+sum(rhat_max < 1.05)
+```
+
+We find that `r sum(rhat_max < 1.05)/K * 100`\% of the `r K` datasets converged (Rhat $<$ 1.05).
+
+### Parameter recovery results
+
+```{r}
+#===============================================================================
+# Population-level parameter recovery
+#===============================================================================
+true_pop <- c(drift_mean = true_pars$drift_mean, drift_sd = true_pars$drift_sd,
+              bound_mean = true_pars$bound_mean, bound_sd = true_pars$bound_sd,
+              nondt_mean = true_pars$nondt_mean, nondt_sd = true_pars$nondt_sd)
+
+data.frame(#parameter = names(true_pop),
+           true = true_pop,
+           mean_est = apply(pop_estimates, 1, mean),
+           sd_est = apply(pop_estimates, 1, sd),
+           bias = apply(pop_estimates, 1, mean) - true_pop)
+```
+
+```{r, fig.width=10, fig.height=6}
+#===============================================================================
+# Visualization: Population parameter recovery
+#===============================================================================
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1))
+
+for (i in 1:6) {
+    param_name <- rownames(pop_estimates)[i]
+    hist(pop_estimates[i, ], breaks = 20, main = param_name,
+         xlab = "Estimate", col = "lightblue", border = "white")
+    abline(v = true_pop[i], col = "red", lwd = 2, lty = 2)
+    abline(v = mean(pop_estimates[i, ]), col = "blue", lwd = 2)
+    legend("topright", c("True", "Mean Est."), col = c("red", "blue"), 
+           lty = c(2, 1), lwd = 2, cex = 0.7, bty = "n")
+}
+```
+
+```{r, fig.width=10, fig.height=4}
+#===============================================================================
+# Visualization: Individual parameter recovery (across all datasets)
+#===============================================================================
+
+# Flatten 3D arrays to vectors (P participants x K datasets = P*K points)
+true_drift_all <- as.vector(true_individual[, "drift", ])
+true_bound_all <- as.vector(true_individual[, "bound", ])
+true_nondt_all <- as.vector(true_individual[, "nondt", ])
+
+est_drift_all <- as.vector(ind_estimates[, "drift", ])
+est_bound_all <- as.vector(ind_estimates[, "bound", ])
+est_nondt_all <- as.vector(ind_estimates[, "nondt", ])
+
+par(mfrow = c(1, 3), mar = c(4, 4, 3, 1))
+
+# Drift
+plot(true_drift_all, est_drift_all,
+     xlab = "True drift", ylab = "Estimated drift", 
+     main = paste0("Drift Recovery (n = ", P*K, ")"),
+     pch = 16, col = rgb(0.27, 0.51, 0.71, 0.3), cex = 0.8)
+abline(0, 1, col = "red", lwd = 2, lty = 2)
+legend("bottomright", legend = paste("r =", round(cor(true_drift_all, est_drift_all), 3)),
+       bty = "n", cex = 0.9)
+
+# Bound
+plot(true_bound_all, est_bound_all,
+     xlab = "True bound", ylab = "Estimated bound", 
+     main = paste0("Boundary Recovery (n = ", P*K, ")"),
+     pch = 16, col = rgb(0.27, 0.51, 0.71, 0.3), cex = 0.8)
+abline(0, 1, col = "red", lwd = 2, lty = 2)
+legend("bottomright", legend = paste("r =", round(cor(true_bound_all, est_bound_all), 3)),
+       bty = "n", cex = 0.9)
+
+# Non-decision time
+plot(true_nondt_all, est_nondt_all,
+     xlab = "True nondt", ylab = "Estimated nondt", 
+     main = paste0("Non-decision Time Recovery (n = ", P*K, ")"),
+     pch = 16, col = rgb(0.27, 0.51, 0.71, 0.3), cex = 0.8)
+abline(0, 1, col = "red", lwd = 2, lty = 2)
+legend("bottomright", legend = paste("r =", round(cor(true_nondt_all, est_nondt_all), 3)),
+       bty = "n", cex = 0.9)
+```
+
+```{r}
+#===============================================================================
+# Correlation between true and estimated individual parameters (all datasets)
+#===============================================================================
+cors_trialLevel <- data.frame(
+    param = c("drift", "bound", "nondt"),
+    correlation = c(
+        cor(as.vector(true_individual[, "drift", ]), as.vector(ind_estimates[, "drift", ])),
+        cor(as.vector(true_individual[, "bound", ]), as.vector(ind_estimates[, "bound", ])),
+        cor(as.vector(true_individual[, "nondt", ]), as.vector(ind_estimates[, "nondt", ]))
+    )
+)
+
+print(cors_trialLevel, digits = 3)
+```
+
+---
+
+## Simulation study 2: Direct summary statistics generation
+
+In this simulation study, we generate summary statistics directly from their theoretical sampling distributions, bypassing trial-level data generation. While computationally faster, this method may inflate parameter recovery performance because the generated data perfectly follows the model's assumed sampling distributions which assume independence between all summary statistics.
+
+### Source custom functions
+
+```{r, message=FALSE}
+# Source the function for direct summary statistics generation
+source(here("JAGS", "src", "generate_sumStats.R"))
+```
+
+### Data generation
+
+```{r}
+#===============================================================================
+# Generate or load simulated data (directly sampled summary statistics)
+#===============================================================================
+
+# File path for cached data
+dataFile_direct <- here("JAGS", "demos", "simulation-study", "simplest_model", 
+                        paste0("simData_directSumStats_P", P, "_T", nTrials, "_K", K, ".RData"))
+
+# IF cached data exists, load them
+#####################################!!!
+if (file.exists(dataFile_direct)) {
+    
+    load(dataFile_direct)
+    
+# ELSE, generate new data using direct sampling
+#####################################!!!
+} else {
+    
+    # Initialize 3D array to store summary statistics
+    sumStats_direct <- array(NA, dim = c(P, 5, K),
+                              dimnames = list(
+                                  participant = 1:P,
+                                  stat = c("sub", "nTrials", "sum_correct", "meanRT", "varRT"),
+                                  dataset = 1:K))
+    
+    # Loop over K datasets
+    for (k in 1:K) {
+        
+        set.seed(k + 5000)        
+        #-----------------------------------------------------------------------
+        # Use true individual parameters from Simulation Study 1
+        #-----------------------------------------------------------------------
+        drift_true <- true_individual[, "drift", k]
+        bound_true <- true_individual[, "bound", k]
+        nondt_true <- true_individual[, "nondt", k]
+        
+        #-----------------------------------------------------------------------
+        # Generate summary statistics DIRECTLY from sampling distributions
+        #-----------------------------------------------------------------------
+        true_pars_df <- data.frame(
+            sub   = 1:P,
+            drift = drift_true,
+            bound = bound_true,
+            nondt = nondt_true
+        )
+        
+        sumstats <- generate_sumStats(true_pars_df, nTrials = nTrials)
+        
+        # Store in 3D array
+        sumStats_direct[, "sub", k]         <- sumstats[, "sub"]
+        sumStats_direct[, "nTrials", k]     <- nTrials
+        sumStats_direct[, "sum_correct", k] <- sumstats[, "sum_correct"]
+        sumStats_direct[, "meanRT", k]      <- sumstats[, "meanRT"]
+        sumStats_direct[, "varRT", k]       <- sumstats[, "varRT"]
+        
+        # Progress indicator
+        if (k %% 10 == 0) cat("Dataset", k, "of", K, "complete\n")
+    }
+    
+    # Save to .RData file (no need to save true_individual, it's from Study 1)
+    save(sumStats_direct, P, nTrials, K, file = dataFile_direct)
+}
+```
+
+### Inspect generated data
+
+Let us look at the accuracy rates observed across all datasets for a qucik comparison.
+
+```{r}
+# Check distribution of accuracy rates across all datasets
+accuracy_rates_direct <- sumStats_direct[, "sum_correct", ] / nTrials
+hist(accuracy_rates_direct, main = "Accuracy rates (direct sampling)", 
+     xlab = "Accuracy", col = "lightgreen")
+```
+
+The mean accuracy rate observed across all datasets is `r round(mean(accuracy_rates_direct), 3)` with a standard deviation of `r round(sd(accuracy_rates_direct), 3)` and a range of `r round(min(accuracy_rates_direct), 3)` to `r round(max(accuracy_rates_direct), 3)`.
+
+### Model fitting
+
+```{r}
+#===============================================================================
+# Fit model or load cached results (direct summary statistics)
+#===============================================================================
+
+# File path for cached results
+resultsFile_direct <- here("JAGS", "demos", "simulation-study", "simplest_model",
+                           paste0("simResults_directSumStats_P", P, "_T", nTrials, "_K", K, ".RData"))
+
+# Check if cached results exist
+if (file.exists(resultsFile_direct)) {
+    
+    load(resultsFile_direct)
+    
+} else {
+    
+    # JAGS sampling settings (same as Simulation Study 1)
+    n.chains  <- 4
+    n.iter    <- 5000
+    n.burnin  <- 1000
+    n.thin    <- 1
+    
+    # Parameters to monitor
+    parameters <- c('drift_mean', 'drift_sd', 'bound_mean', 'bound_sd', 
+                    'nondt_mean', 'nondt_sd', 'drift', 'bound', 'nondt')
+    
+    # Initialize storage arrays
+    pop_estimates_direct <- array(NA, dim = c(6, K),
+                                   dimnames = list(param = c("drift_mean", "drift_sd", 
+                                                             "bound_mean", "bound_sd", 
+                                                             "nondt_mean", "nondt_sd"),
+                                                   dataset = 1:K))
+    
+    ind_estimates_direct <- array(NA, dim = c(P, 3, K),
+                                   dimnames = list(participant = 1:P,
+                                                   param = c("drift", "bound", "nondt"),
+                                                   dataset = 1:K))
+    
+    rhat_max_direct <- numeric(K)
+    
+    # Fit model to all K datasets
+    for (k in 1:K) {
+        set.seed(k + 1000)
+        
+        # Prepare data for JAGS
+        data_toJAGS <- list(
+            N        = P,
+            nTrials  = rep(nTrials, P),
+            correct  = sumStats_direct[, "sum_correct", k],
+            meanRT   = sumStats_direct[, "meanRT", k],
+            varRT    = sumStats_direct[, "varRT", k]
+        )
+        
+        # Initial values
+        myinits <- replicate(n.chains, list(
+            drift = rnorm(P, 0.5, 0.1),
+            bound = runif(P, 1.0, 2.0),
+            nondt = runif(P, 0.2, 0.4)
+        ), simplify = FALSE)
+        
+        # Run JAGS
+        samples <- jags(data = data_toJAGS,
+                        parameters.to.save = parameters,
+                        model.file = modelFile,
+                        n.chains = n.chains, n.iter = n.iter,
+                        n.burnin = n.burnin, n.thin = n.thin,
+                        DIC = FALSE, inits = myinits)
+        
+        # Extract posterior means
+        sims <- samples$BUGSoutput$sims.matrix
+        pop_estimates_direct["drift_mean", k] <- mean(sims[, "drift_mean"])
+        pop_estimates_direct["drift_sd", k]   <- mean(sims[, "drift_sd"])
+        pop_estimates_direct["bound_mean", k] <- mean(sims[, "bound_mean"])
+        pop_estimates_direct["bound_sd", k]   <- mean(sims[, "bound_sd"])
+        pop_estimates_direct["nondt_mean", k] <- mean(sims[, "nondt_mean"])
+        pop_estimates_direct["nondt_sd", k]   <- mean(sims[, "nondt_sd"])
+        
+        for (p in 1:P) {
+            ind_estimates_direct[p, "drift", k] <- mean(sims[, paste0("drift[", p, "]")])
+            ind_estimates_direct[p, "bound", k] <- mean(sims[, paste0("bound[", p, "]")])
+            ind_estimates_direct[p, "nondt", k] <- mean(sims[, paste0("nondt[", p, "]")])
+        }
+        
+        # Convergence check
+        rhats <- apply(samples$BUGSoutput$sims.array[, , 1:6], 3, getRhat)
+        rhat_max_direct[k] <- max(rhats)
+        
+        if (k %% 10 == 0) cat("Dataset", k, "/", K, "| Max Rhat:", round(rhat_max_direct[k], 3), "\n")
+    }
+    
+    # Save results
+    save(pop_estimates_direct, ind_estimates_direct, rhat_max_direct, 
+         n.chains, n.iter, n.burnin, n.thin,
+         file = resultsFile_direct)
+}
+```
+
+```{r}
+sum(rhat_max_direct < 1.05)
+```
+
+We find that `r sum(rhat_max_direct < 1.05)/K * 100`\% of the `r K` datasets converged (Rhat $<$ 1.05).
+
+### Parameter recovery results
+
+```{r}
+#===============================================================================
+# Population-level parameter recovery (direct sampling)
+#===============================================================================
+data.frame(true = true_pop,
+           mean_est = apply(pop_estimates_direct, 1, mean),
+           sd_est = apply(pop_estimates_direct, 1, sd),
+           bias = apply(pop_estimates_direct, 1, mean) - true_pop)
+```
+
+```{r, fig.width=10, fig.height=6}
+#===============================================================================
+# Visualization: Population parameter recovery (direct sampling)
+#===============================================================================
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1))
+
+for (i in 1:6) {
+    param_name <- rownames(pop_estimates_direct)[i]
+    hist(pop_estimates_direct[i, ], breaks = 20, main = param_name,
+         xlab = "Estimate", col = "lightgreen", border = "white")
+    abline(v = true_pop[i], col = "red", lwd = 2, lty = 2)
+    abline(v = mean(pop_estimates_direct[i, ]), col = "darkgreen", lwd = 2)
+    legend("topright", c("True", "Mean Est."), col = c("red", "darkgreen"), 
+           lty = c(2, 1), lwd = 2, cex = 0.7, bty = "n")
+}
+```
+
+```{r, fig.width=10, fig.height=4}
+#===============================================================================
+# Visualization: Individual parameter recovery (direct sampling, all datasets)
+#===============================================================================
+
+# Flatten 3D arrays to vectors
+# Use same true_individual from Simulation Study 1
+true_drift_direct <- as.vector(true_individual[, "drift", ])
+true_bound_direct <- as.vector(true_individual[, "bound", ])
+true_nondt_direct <- as.vector(true_individual[, "nondt", ])
+
+est_drift_direct <- as.vector(ind_estimates_direct[, "drift", ])
+est_bound_direct <- as.vector(ind_estimates_direct[, "bound", ])
+est_nondt_direct <- as.vector(ind_estimates_direct[, "nondt", ])
+
+par(mfrow = c(1, 3), mar = c(4, 4, 3, 1))
+
+# Drift
+plot(true_drift_direct, est_drift_direct,
+     xlab = "True drift", ylab = "Estimated drift", 
+     main = paste0("Drift Recovery (n = ", P*K, ")"),
+     pch = 16, col = rgb(0.13, 0.55, 0.13, 0.3), cex = 0.8)
+abline(0, 1, col = "red", lwd = 2, lty = 2)
+legend("bottomright", legend = paste("r =", round(cor(true_drift_direct, est_drift_direct), 3)),
+       bty = "n", cex = 0.9)
+
+# Bound
+plot(true_bound_direct, est_bound_direct,
+     xlab = "True bound", ylab = "Estimated bound", 
+     main = paste0("Boundary Recovery (n = ", P*K, ")"),
+     pch = 16, col = rgb(0.13, 0.55, 0.13, 0.3), cex = 0.8)
+abline(0, 1, col = "red", lwd = 2, lty = 2)
+legend("bottomright", legend = paste("r =", round(cor(true_bound_direct, est_bound_direct), 3)),
+       bty = "n", cex = 0.9)
+
+# Non-decision time
+plot(true_nondt_direct, est_nondt_direct,
+     xlab = "True nondt", ylab = "Estimated nondt", 
+     main = paste0("Non-decision Time Recovery (n = ", P*K, ")"),
+     pch = 16, col = rgb(0.13, 0.55, 0.13, 0.3), cex = 0.8)
+abline(0, 1, col = "red", lwd = 2, lty = 2)
+legend("bottomright", legend = paste("r =", round(cor(true_nondt_direct, est_nondt_direct), 3)),
+       bty = "n", cex = 0.9)
+```
+
+```{r}
+#===============================================================================
+# Correlation summary (direct sampling)
+#===============================================================================
+cors_direct <- data.frame(
+    param = c("drift", "bound", "nondt"),
+    correlation = c(
+        cor(true_drift_direct, est_drift_direct),
+        cor(true_bound_direct, est_bound_direct),
+        cor(true_nondt_direct, est_nondt_direct)
+    )
+)
+
+print(cors_direct, digits = 3)
+```
+
+---
+
+## Comparison: Trial-level vs Direct sampling
+
+The model seems to perform similarly well when using trial-level data or directly sampled summary statistics in terms of the **individual-level** parameter recovery.
+```{r}
+#===============================================================================
+# Compare parameter recovery between the two approaches
+#===============================================================================
+
+comparison <- data.frame(
+    parameter = c("drift", "bound", "nondt"),
+    r_trialLevel = cors_trialLevel$correlation,
+    r_directSampling = cors_direct$correlation)
+
+print(comparison, digits = 3)
+```
+
+When we look at the **population-level** parameter recovery, we see that the model shows less biased estimates when using the directly sampled summary statistics. 
+
+```{r}
+#===============================================================================
+# Population-level bias comparison
+#===============================================================================
+bias_trialLevel <- apply(pop_estimates, 1, mean) - true_pop
+bias_direct <- apply(pop_estimates_direct, 1, mean) - true_pop
+
+bias_comparison <- data.frame(#parameter = names(true_pop),
+                              bias_trialLevel = bias_trialLevel,
+                              bias_direct = bias_direct)
+print(bias_comparison, digits = 4)
+```

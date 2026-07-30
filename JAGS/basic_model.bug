@@ -1,0 +1,62 @@
+
+model {
+    #===================================================================
+    # HIERARCHICAL PRIORS: Population-level parameters
+    #===================================================================
+    # Population means
+    drift_mean ~ dnorm(0.50, pow(0.50, -2))
+    bound_mean ~ dnorm(1.50, pow(0.20, -2)) T(0.10, 3.00)
+    nondt_mean ~ dnorm(0.30, pow(0.10, -2)) T(0.05, )
+    
+    # Population standard deviations (between-subject variability)
+    drift_sd ~ dunif(0.01, 1.00)
+    bound_sd ~ dunif(0.01, 0.50)
+    nondt_sd ~ dunif(0.01, 0.20)
+
+    #===================================================================
+    # INDIVIDUAL PARAMETERS AND LIKELIHOOD
+    #===================================================================
+    for (p in 1:N) {
+        
+        #---------------------------------------------------------------
+        # Individual DDM parameters drawn from hierarchical distributions
+        #---------------------------------------------------------------
+        drift[p] ~ dnorm(drift_mean, pow(drift_sd, -2))
+        bound[p] ~ dnorm(bound_mean, pow(bound_sd, -2)) T(0.10, 3.00)
+        nondt[p] ~ dnorm(nondt_mean, pow(nondt_sd, -2)) T(0.05, )
+        
+        #---------------------------------------------------------------
+        # EZ-DDM Forward Equations: Parameters -> Expected summary stats
+        #---------------------------------------------------------------
+        # Intermediate term
+        ey[p] <- exp(-bound[p] * drift[p])
+        
+        # Expected proportion correct
+        Pc[p] <- 1 / (1 + ey[p])
+        
+        # Expected mean decision time
+        MDT[p] <- (bound[p] / (2 * drift[p])) * (1 - ey[p]) / (1 + ey[p])
+        
+        # Expected mean reaction time (decision time + non-decision time)
+        MRT[p] <- MDT[p] + nondt[p]
+        
+        # RT precision (inverse variance)
+        PRT[p] <- 2 * pow(drift[p], 3) / bound[p] * 
+                  pow(ey[p] + 1, 2) / 
+                  (2 * -bound[p] * drift[p] * ey[p] - pow(ey[p], 2) + 1)
+        
+        #---------------------------------------------------------------
+        # Sampling Distributions: Likelihood of observed summary stats
+        #---------------------------------------------------------------
+        # Number correct ~ Binomial(nTrials, Pc)
+        correct[p] ~ dbin(Pc[p], nTrials[p])
+        
+        # Mean RT ~ Normal(MRT, precision = PRT * nTrials)
+        meanRT[p] ~ dnorm(MRT[p], PRT[p] * nTrials[p])
+        
+        # Variance of RT ~ Normal(VRT, precision from sampling distribution)
+        # Note: VRT = 1/PRT
+        varRT[p] ~ dnorm(1/PRT[p], 0.5 * (nTrials[p] - 1) * pow(PRT[p], 2))
+    }
+}
+
