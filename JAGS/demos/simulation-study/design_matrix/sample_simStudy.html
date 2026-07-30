@@ -1598,8 +1598,8 @@ src: url(data:application/x-font-truetype;base64,AAEAAAARAQAABAAQR0RFRgs+Cz8AAjw
       <li><a href="#simulation-2-condition-effect-on-non-decision-time">Simulation 2: Condition Effect on Non-Decision Time</a><ul>
       <li><a href="#individual-level-recovery-plots">Individual-level Recovery plots</a></li>
       <li><a href="#summary-tables-simulation-2">Summary Tables (Simulation 2)</a></li>
-      <li><a href="#key-takeaway">Key Takeaway</a></li>
       </ul></li>
+      <li><a href="#conclusion">Conclusion</a></li>
       </ul>
     </div>
     <div id="postamble" data-toggle="wy-nav-shift" class="status">
@@ -3336,16 +3336,16 @@ src: url(data:application/x-font-truetype;base64,AAEAAAARAQAABAAQR0RFRgs+Cz8AAjw
 </tbody>
 </table>
 </div>
-<div id="key-takeaway" class="section level2">
-<h2>Key Takeaway</h2>
-<p>Both simulation studies used the <strong>identical JAGS model file</strong>. The only differences were:</p>
-<ol style="list-style-type: decimal">
-<li><code>P_tau = 1</code> vs <code>P_tau = 2</code></li>
-<li>Design array <span class="math inline">\(X_\tau\)</span> (intercept only vs intercept + condition dummy)</li>
-<li>True parameter list (with or without <code>b1_tau</code>)</li>
-</ol>
-<p>This is the design matrix flexibility in practice: we just need to change the data, not the model itself.</p>
 </div>
+<div id="conclusion" class="section level1">
+<h1>Conclusion</h1>
+<p>We ran two separate simulation studies with different design matrices, and used the <strong>same JAGS model file</strong> to retrieve posterior estimates.</p>
+<ul>
+<li>Simulation 1 included only one predictor of the nondt <code>P_tau = 1</code> (i.e. only intercept).</li>
+<li>Simulation 2 included two predictors of the nondt <code>P_tau = 2</code> (i.e. intercept + condition dummy)</li>
+<li>Both simulation studies differ in the design array <span class="math inline">\(X_\tau\)</span></li>
+</ul>
+<p>Across both simulations, using the same JAGS model resulted in appropriate parameter recovery results.</p>
 </div>
 </div>
 
