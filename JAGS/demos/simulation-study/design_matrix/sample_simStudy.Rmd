@@ -1020,12 +1020,12 @@ knitr::kable(bias_summary_sim2, digits = 3,
              caption = "Simulation 2: Population Parameter Recovery (Bias and RMSE)")
 ```
 
-## Key Takeaway
+# Conclusion
 
-Both simulation studies used the **identical JAGS model file**. The only differences were:
+We ran two separate simulation studies with different design matrices, and used the **same JAGS model file** to retrieve posterior estimates. 
 
-1. `P_tau = 1` vs `P_tau = 2`
-2. Design array $X_\tau$ (intercept only vs intercept + condition dummy)
-3. True parameter list (with or without `b1_tau`)
+- Simulation 1 included only one predictor of the nondt `P_tau = 1` (i.e. only intercept). 
+- Simulation 2 included two predictors of the nondt `P_tau = 2` (i.e. intercept + condition dummy)
+- Both simulation studies differ in the design array $X_\tau$ 
 
-This is the design matrix flexibility in practice: we just need to change the data, not the model itself.
+Across both simulations, using the same JAGS model resulted in appropriate parameter recovery results.
