@@ -2,6 +2,16 @@
 title: "Outcomes notes"
 output: html_notebook
 ---
+
+**Update: compare the full ddm (Henrichts et al., 2014: The Seven-parameter Diffusion Model: an Implementation in Stan for Bayesian Analyses) to my EZ**
+
+- first making the full ddm run without killing my computer (maybe 60-70% of the trials because the wiener_lpdf takes A LOT of time)
+- make a pilot 
+- run the full thing 
+- compare to the hierarchical EZ 
+
+
+
 **RT question**
 - see RT plots
 - first five trials: mean = 0.281, rest = 0.285 --> not slower, 4ms faster
@@ -27,7 +37,7 @@ Question: do the mean results come closer to the original ones when we add the c
 *new plots results*
 
 - Resp_type slope on nu and Resp_type slope on alpha have wide individual credible intervals and many are crossing zero
-- same as what the paper mentions as a limitation --> few error trials per person whcih inflates individual-level uncertainty --> hard to tell yet at the individual level whether there are differences
+- same as what the paper mentions as a limitation --> few error trials per person which inflates individual-level uncertainty --> hard to tell yet at the individual level whether there are differences
 - alpha and nu both have the biggest visual separation in congruent vs. incongruent
 - nu violins show interaction : post-error nu is way lower in congruent trials but stays about the same or slightly higher in incongruent trials 
 - tau varies but is not modelled, maybe we should look at it too
@@ -87,8 +97,11 @@ It is good for comparison the per person parameters though, because their model 
 - EEG amplitude is correlated with response type 
 - we dropped a predictor that was correlated with the ones we kept --> maybe our coefficients absorb the missing predictor's explained variance
 - that could be why b_nu_condition too low, b_nu_interaction too high and mu_alpha about half the value
-- option 2: the paper only has condition, EEG-amplitude, and EEG interaction with response-type cvarying by person, response_type is fixed, we let response_type vary by person
+- option 2: the paper only has condition, EEG-amplitude, and EEG interaction with response-type varying by person, response_type is fixed, we let response_type vary by person
 - option 3: condition effect on alpha is person-specific (participants_alpha_cond) in the paper, in my model its fixed --> bias the fixed estimate so there is more shrinkage??
 - our b_alpha_condition (0.057) is a lot smaller so maybe thats why 
 
---> **I will try out option 2 and 3 now**
+
+
+
+
