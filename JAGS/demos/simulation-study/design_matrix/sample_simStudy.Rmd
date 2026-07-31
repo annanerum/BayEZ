@@ -36,7 +36,8 @@ The model uses three **3D design arrays** to specify predictors for each DDM par
 Where:
 
 - $I$ = number of participants
-- $K$ = number of conditions (each participant has one observation per condition)
+- $K$ = number of conditions (within-subject cells). For each participant, we compute $k$ of each summary statistics used by the EZ-DDM.
+- $J$ = number of trials per participant per condition (used to form the cell-level summary statistics)
 - $P$ = number of predictors (including intercept) for each parameter:
   - $P_\nu = 2$: intercept + dummy-coded condition (0 for condition 1, 1 for condition 2)
   - $P_\alpha = 2$: intercept + continuous between-subject covariate $x_i$
