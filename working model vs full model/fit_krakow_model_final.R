@@ -35,9 +35,13 @@ priors <- list(
       2,    2,    0.5,  0.5),
     nrow = 2, byrow = TRUE
   ),
+  # columns: intercept, resp_type, condition
+  # intercept ~ Normal(1,1), resp_type ~ Normal(0,0.2): already matched Grabowska.
+  # condition SD changed from 0.2 -> 1 to match Grabowska's actual
+  # mu_theta(c) ~ Normal(0,1) (was previously an untraced mismatch).
   prior_beta_alpha = matrix(
     c(1,    0,     0,
-      1,    0.2,   0.2),
+      1,    0.2,   1),
     nrow = 2, byrow = TRUE
   ),
   prior_beta_tau = matrix(
@@ -45,16 +49,26 @@ priors <- list(
       0.2),
     nrow = 2, byrow = TRUE
   ),
+  # sigma_nu / sigma_alpha / sigma_tau (EZ's cell-level residual SDs) have no
+  # Grabowska equivalent 
   prior_sigma_nu    = c(0.3,  0.3),
   prior_sigma_alpha = c(0.3,  0.3),
   prior_sigma_tau   = c(0.1,  0.15),
-  prior_sigma_nu_c    = c(0, 0.5),
+  # sigma_nu_c: NOW Gamma(1,1) to genuinely match Grabowska's
+  # sigma_theta(c) ~ Gamma(1,1) half-normal 
+  prior_sigma_nu_c    = c(1, 1),
+  # sigma_nu_r / sigma_nu_cr: Grabowska treats resp_type and the interaction
+  # as fixed on drift, we do random 
   prior_sigma_nu_r    = c(0, 0.5),
   prior_sigma_nu_cr   = c(0, 0.5),
   prior_sigma_alpha_r = c(0, 0.5),   # unused now
   prior_sigma_nu_intercept    = c(0, 1),
-  prior_sigma_alpha_intercept = c(0, 0.3),
-  prior_sigma_tau_intercept   = c(0, 0.1)
+  # sigma_alpha_intercept: now Gamma(1,1) to match Grabowska's
+  # sigma_theta(alpha) ~ Gamma(1,1) half-normal
+  prior_sigma_alpha_intercept = c(1, 1),
+  # sigma_tau_intercept: NOW Gamma(0.3,1) to match Grabowska's
+  # sigma_theta(tau) ~ Gamma(0.3,1)  half-normal
+  prior_sigma_tau_intercept   = c(0.3, 1)
 )
 
 cat("Loading data \n")
@@ -121,7 +135,7 @@ GROUP_PARS <- c(
   "beta_tau",
   "sigma_nu", "sigma_alpha", "sigma_tau",
   "sigma_nu_c", "sigma_nu_r", "sigma_nu_cr",
-  # "sigma_alpha_r",   # CHANGED: removed, no longer exists
+  # "sigma_alpha_r",   
   "sigma_alpha_intercept", "sigma_tau_intercept"
 )
 
