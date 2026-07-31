@@ -7,7 +7,7 @@
 
         <meta name="author" content="Adriana F. Chávez De la Peña" />
     
-        <meta name="date" content="2026-07-30" />
+        <meta name="date" content="2026-07-31" />
     
     <title>Design Matrix implementation for Hierarchical EZ-DDM in JAGS</title>
 
@@ -1604,7 +1604,7 @@ src: url(data:application/x-font-truetype;base64,AAEAAAARAQAABAAQR0RFRgs+Cz8AAjw
     </div>
     <div id="postamble" data-toggle="wy-nav-shift" class="status">
                   <p class="author"><span class="glyphicon glyphicon-user"></span> Adriana F. Chávez De la Peña</p>
-                        <p class="date"><span class="glyphicon glyphicon-calendar"></span> 2026-07-30</p>
+                        <p class="date"><span class="glyphicon glyphicon-calendar"></span> 2026-07-31</p>
           </div>
    </div>
    
@@ -1658,7 +1658,8 @@ src: url(data:application/x-font-truetype;base64,AAEAAAARAQAABAAQR0RFRgs+Cz8AAjw
 <p>Where:</p>
 <ul>
 <li><span class="math inline">\(I\)</span> = number of participants</li>
-<li><span class="math inline">\(K\)</span> = number of conditions (each participant has one observation per condition)</li>
+<li><span class="math inline">\(K\)</span> = number of conditions (within-subject cells).</li>
+<li><span class="math inline">\(J\)</span> = number of trials per participant per condition (used to form the cell-level summary statistics)</li>
 <li><span class="math inline">\(P\)</span> = number of predictors (including intercept) for each parameter:
 <ul>
 <li><span class="math inline">\(P_\nu = 2\)</span>: intercept + dummy-coded condition (0 for condition 1, 1 for condition 2)</li>
