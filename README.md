@@ -105,16 +105,62 @@ Initial STAN model development (archived?).
 
 ---
 
-### `JAGS/` 
+### `JAGS/` (JAGS COUNTERPART)
 
-| File/Folder | Description |
-|-------------|-------------|
-| `basic_model.bug` | Base JAGS model with EZ-DDM forward equations. Includes hierarchical priors, $\nu$ as function of predictors (via $\beta$ weights and $\Phi$ transformation), and sampling distributions for summary statistics (correct, VRT, MRT) |
-| `intro.Rmd` | Tutorial/documentation RMarkdown with background on DDM, EZ-DDM, JAGS setup, running instructions, convergence checks ($\hat{R}$), and example visualizations |
-| `src/getRhat.R` | $\hat{R}$ convergence diagnostic function |
-| `demos/applications/` | Empty |
-| `demos/simulation-study/` | Empty |
+Parallel JAGS implementation of the hierarchical EZ-DDM. 
 
+**Top-level folders:**
+
+| Folder | Description |
+|--------|-------------|
+| `src/` | Shared custom R functions used across reports (data generation, summary statistics, $\hat{R}$, recovery plots, simulation helpers) |
+| `demos/` | Self-contained demo reports and their caches/outputs: `simulation-study/` (parameter recovery) and `applications/` (real data) |
+
+**Shared `src/` files:**
+
+| File | Description |
+|------|-------------|
+| `generate_truePars.R` | Generate true individual DDM parameters from hierarchical designs |
+| `generate_trialData.R` | Simulate trial-level DDM data (random-walk emulation) |
+| `generate_sumStats.R` | Sample summary statistics directly from EZ sampling distributions |
+| `calculate_sumStats.R` | Compute $C$, mean RT, and RT variance from trial data |
+| `calculate_Rhat.R` | $\hat{R}$ convergence diagnostic |
+| `plot_recovery.R` | Base-R recovery plots (individual and population) |
+| `simulation_settings.R` | Helpers for flexible design-matrix simulation output extraction |
+
+**Three main reports:**
+
+#### 1. `intro.Rmd` (simplest hierarchical EZ-DDM)
+
+Introductory tutorial with background on the DDM / EZ-DDM and two short simulations (fixed $P$ and $T$): trial-level data generation vs direct summary-statistic sampling.
+
+| Path | Role |
+|------|------|
+| `JAGS/intro.Rmd` | Main report (+ knitted HTML alongside it) |
+| `JAGS/basic_model.bug` | Simple hierarchical EZ-DDM JAGS model (written/used by the report) |
+| `JAGS/demos/simulation-study/simplest_model/` | Cached `.RData` simulation inputs/results |
+
+#### 2. `sample_simStudy.Rmd` (design-matrix simulation study)
+
+JAGS replication of Stan simulation (`working simulation + output/`). Uses design arrays and `inprod()` so the same model can fit different $P$ / $X$ structures. Includes two recovery studies.
+
+| Path | Role |
+|------|------|
+| `JAGS/demos/simulation-study/design_matrix/sample_simStudy.Rmd` | Main report (+ knitted HTML) |
+| `JAGS/demos/simulation-study/design_matrix/figures/` | Saved recovery plots (Study 1) |
+| `JAGS/demos/simulation-study/design_matrix/figures_tauCond/` | Saved recovery plots (Study 2) |
+| `JAGS/demos/simulation-study/design_matrix/*.RData` | Cached simulation results |
+
+#### 3. `demo_realData.Rmd` (Krakow real-data application)
+
+JAGS replication of Anne's Grabowska et al. (2025) Krakow analysis: 4 cells (congruence $\times$ previous accuracy), contrast coding, multiple random slopes. Behavioral predictors only (no EEG).
+
+| Path | Role |
+|------|------|
+| `JAGS/demos/applications/demo_realData.Rmd` | Main report (+ knitted HTML) |
+| `JAGS/demos/applications/model_krakow.bug` | Krakow JAGS model (written by the report via `writeLines()`) |
+| `JAGS/demos/applications/data/krakow_data_standardized.csv` | Trial-level Krakow data ([OSF](https://osf.io/36pvg/overview)) |
+| `JAGS/demos/applications/output_krakow/` | Cached JAGS fit / outputs |
 
 ---
 
@@ -172,11 +218,3 @@ The model uses design matrices to flexibly specify predictors:
 - $X_\tau[i,k,p]$: Predictors for non-decision time (typically just intercept)
 
 This allows changing the model structure by modifying the design matrices rather than rewriting the model code.
-
----
-
-## Notes for JAGS Implementation
-
-Key differences from STAN:
-- JAGS uses precision ($1/\sigma^2$) instead of SD in normal distributions
-- Truncation syntax: `T(lower, upper)` in JAGS vs `T[lower, upper]` in STAN
