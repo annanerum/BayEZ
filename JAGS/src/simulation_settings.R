@@ -33,7 +33,7 @@ get_beta_names <- function(param_name, P) {
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
 # get_rhat_params: Get all parameter names for convergence diagnostics
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
 get_rhat_params <- function(P_nu, P_alpha, P_tau) {
     c(get_beta_names("beta_nu", P_nu),
       get_beta_names("beta_alpha", P_alpha),
