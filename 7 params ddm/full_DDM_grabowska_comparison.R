@@ -116,7 +116,7 @@ raw <- raw %>% mutate(pid = as.integer(factor(participant_orig, levels = unique(
 I <- max(raw$pid)
 N <- nrow(raw)
 
-# --- Step 1d: per-participant minimum RT, used to bound non-decision time
+# per-participant minimum RT, used to bound non-decision time
 # (t0 = min_rt * inv_logit(...) in the Stan model, guaranteeing t0 < min_rt
 # <= every trial's RT for that person, which wiener_lpdf requires)
 min_rt <- raw %>%
