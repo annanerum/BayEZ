@@ -1,0 +1,103 @@
+---
+title: "Demo Application in JAGS using the Krakow Dataset (Grabowska et al., 2025)"
+author: "Adriana F. Chávez De la Peña"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    self_contained: true
+    thumbnails: false
+    lightbox: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 10, fig.height = 7)
+library(R2jags)
+library(here)
+```
+
+This document reproduces Anne's real-data analysis of the Krakow dataset (Grabowska et al., 2025) in JAGS. Anne's STAN implementation can be found in:
+
+- `real data scripts and models/grabowska_ez_fit_krakow.R` (main fit script)
+- `real data scripts and models/grabowska_ez_model.stan` (model)
+
+The goal of this applied demo is to fit a hierarchical Bayesian EZ-DDM using design matrices to the data collected by Grabowska et al. (2025).
+
+# About the data (Krakow dataset description) 
+
+Here, we present a brief overview of the original study from which the data comes from (Grabowska et al., 2025)
+
+## The experiment 
+
+Participants completed a modified version of the **speeded arrow flanker task** as part of a large EEG project on post-response adaptation. The number of participants in the sample after cleaning was $N=222$ (participants who made too few errors or whose EEG data had poor quality were excluded from the analysis).
+
+On each trial, participants' task was to **indicate whether a target arrow shown on screen was pointing left or right**. These target arrows appeared between to ``flanker'' arrows, which were either pointing in the same direction as the target (**congruent trials**, $70\%$ of trials) or in the opposite direction (**incongruent trials**, $30\%$ of trials). Importantly, on every trial participants only had a 600ms window to respond (hence why this is referred to as a ***speeded* arrow flanker task**). Participants complete a total of $T=300$ trials across 6 blocks.
+
+## Study focus
+
+This study focuses on **post-response adaptation**: Does the previous trial outcome (correct vs. error response) and the congruency condition (congruent vs. incongruent) have an effect on subsequent choices? 
+
+# About this demo
+
+We work with the data file `krakow_data_standardized.csv`, available for download [here](https://osf.io/36pvg/overview). The file is stored locally under `JAGS/demos/applications/data/`.
+
+```{r}
+dataFile <- here("JAGS", "demos", "applications", "data",
+                 "krakow_data_standardized.csv")
+```
+
+We aggregate each participant's trials into **4 cells** following a $2 \times 2$ design defined by condition (congruent vs. incongruent) $\times$ past outcome (post-correct vs. post-error). Within each factor, levels are contrast-coded as $\pm 1$:
+
+| Cell $k$ | Condition | Past outcome | Coding $(\text{Cond} \times \text{Past})$ |
+|----------|-----------|---------------|--------------------------------------|
+| 1 | Congruent | Post-correct | $(+1, +1)$ |
+| 2 | Congruent | Post-error | $(+1, -1)$ |
+| 3 | Incongruent | Post-correct | $(-1, +1)$ |
+| 4 | Incongruent | Post-error | $(-1, -1)$ |
+
+We do **not** include the EEG predictors from Grabowska et al. (same choice as Anne's main Stan fit).
+
+## Design matrix specification
+
+The model uses three **3D design arrays** to specify predictors for each DDM parameter. Each array has dimensions $I \times K \times P$, where for each participant $i$ and cell $k$, the slice $X[i,k,]$ is a row vector containing $P$ predictor values.
+
+| Parameter | Design Array | Dimensions | Predictors |
+|-----------|--------------|------------|------------|
+| $\nu$ (drift) | $X_\nu[i,k,p]$ | $I \times K \times P_\nu$ | Intercept + Condition + Past + Condition $\times$ Past |
+| $\alpha$ (boundary) | $X_\alpha[i,k,p]$ | $I \times K \times P_\alpha$ | Intercept + Past |
+| $\tau$ (non-decision) | $X_\tau[i,k,p]$ | $I \times K \times P_\tau$ | Intercept only |
+
+Where:
+
+- $I$ = number of participants
+- $K$ = number of within-subject cells
+- $P$ = number of predictors (including intercept) for each parameter:
+  - $P_\nu = 4$: Intercept + Condition + Past + Condition $\times$ Past
+  - $P_\alpha = 2$: Intercept + Past
+  - $P_\tau = 1$: Intercept only (no Condition or Past trial effects)
+
+```{r}
+K <- 4        
+P_nu    <- 4 
+P_alpha <- 2 
+P_tau   <- 1 
+```
+
+Using the same $I \times K \times P$ structure for all design arrays $X_\tau$, $X_\alpha$, and $X_\nu$ ensures uniform indexing in the JAGS model that supports future extensions that include additional predictors. These fixed effects can be easily incorporated by using inner products (e.g., $\mu_{\tau,ik} = X_\tau[i,k,] \cdot \beta_\tau$). 
+
+## The model 
+
+In this demo, we use a model with **person-specific random slopes** on the columns of $X_\nu$ and $X_\alpha$ that correspond to the predictors of interest (congruency condition, past trial outcome, and their interaction). These random effects need to be added directly into the JAGS model as individual slopes.
+
+```{r}
+# Define design matrix for each cell
+# Columns: [Intercept, Condition, Past, Cond x Past]
+cell_design <- matrix(
+    c( 1,  1,  1,  1,
+       1,  1, -1, -1,
+       1, -1,  1, -1,
+       1, -1, -1,  1),
+    nrow = K, byrow = TRUE
+)
+```
+
