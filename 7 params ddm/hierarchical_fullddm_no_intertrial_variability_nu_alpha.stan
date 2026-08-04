@@ -1,8 +1,8 @@
 //   w (bias)          : fixed at 0.5 
 //   sv, sw, st0       : fixed at 0 
 
-// since w=0.5 both boundaries use the same w value (1-0.5=0.5),
-// so the only difference between the correct/error likelihood terms is the sign of v
+// w=0.5 --> both boundaries use the same w value (1-0.5=0.5)
+// --> only difference between the correct/error likelihood terms is the sign of v
 
 // effect structure 
 //   nu (drift)     : intercept fixed, condition/resp_type/interaction random
