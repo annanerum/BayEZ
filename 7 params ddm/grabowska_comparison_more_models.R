@@ -4,7 +4,7 @@
 
 #   sv_wfree_swfree    : w free,      sw free,     sv free,     st0=0 fixed
 #   sv_wfree           : w free,      sw=0 fixed, sv free,     st0=0 fixed
-#   free_wfree_swfree  : w free,      sw free,     sv free,     st0 free   (true unconstrained model)
+#   free_wfree_swfree  : w free,      sw free,     sv free,     st0 free   (full 7 params ddm)
 #   free_wfree         : w free,      sw=0 fixed, sv free,     st0 free
 #   zero_wfree_swfree  : w free,      sw free,     sv=0 fixed,  st0=0 fixed
 #   zero_wfree         : w free,      sw=0 fixed, sv=0 fixed,  st0=0 fixed
@@ -19,8 +19,8 @@ set.seed(42)
 
 
 
-MODEL_VERSION <- "zero"   # see the 10 names listed above
-SCALE         <- "full"  # "quicktest", "tryout", "real", or "full"
+MODEL_VERSION <- "zero"   
+SCALE         <- "full"  # "quicktest", "tryout", or "full"
 
 # --- Registry: what each model version needs ---------------------------------
 MODEL_REGISTRY <- list(
@@ -48,19 +48,13 @@ MODEL_REGISTRY <- list(
 reg <- MODEL_REGISTRY[[MODEL_VERSION]]
 stan_file <- reg$stan_file
 
-# Stan parameter name differs from the conceptual name for sw/st0 (they're
-# "_raw" fractions internally) -- this mapping is used for init values only,
-# the transformed-parameter (sw/st0 themselves) is what gets reported.
+
 PARAM_STAN_NAME <- list(w = "w", sv = "sv", sw = "sw_raw", st0 = "st0_raw")
 PRIOR_DATA_NAME <- list(w = "prior_w", sv = "prior_sv", sw = "prior_sw", st0 = "prior_st0")
 DEFAULT_PRIOR   <- list(w = c(0.5, 0.1), sv = c(0.5, 0.5), sw = c(0.3, 0.2), st0 = c(0.3, 0.2))
 DEFAULT_INIT    <- list(w = 0.5, sv = 0.3, sw = 0.1, st0 = 0.1)
 
-# --- Scale settings: participant/trial fractions + iteration budget ----------
-# quicktest configs are intentionally identical and small for every version --
-# this is the "find out the real cost" step. tryout/full below are informed
-# guesses based on which mechanism (w/sv free = cheap, sw/st0 free = expensive)
-# applies to this specific version; NOT confirmed for the 7 new versions.
+
 SCALE_CONFIG <- list(
   zero    = list(quicktest = list(fp=0.07, ft=0.25, wu=50,  sp=30),
                   tryout    = list(fp=0.30, ft=0.50, wu=500, sp=300),
@@ -75,9 +69,9 @@ SCALE_CONFIG <- list(
                   real      = list(fp=0.50, ft=0.65, wu=300, sp=200),
                   full      = list(fp=1.00, ft=1.00, wu=300, sp=200))
 )
-# The 7 new versions all start with the same conservative quicktest, and
-# tryout/full sized by expected cost class (cheap: w/sv only free; expensive:
-# sw or st0 free). Revise after each quicktest.
+
+
+
 CHEAP_GUESS <- list(quicktest = list(fp=0.07, ft=0.25, wu=50,  sp=30),
                      tryout    = list(fp=0.30, ft=0.30, wu=300, sp=200),
                      real      = list(fp=0.50, ft=0.65, wu=2000, sp=2000),
@@ -86,12 +80,13 @@ EXPENSIVE_GUESS <- list(quicktest = list(fp=0.07, ft=0.25, wu=50, sp=30),
                          tryout    = list(fp=0.20, ft=0.20, wu=80, sp=50),
                          real      = list(fp=0.30, ft=0.30, wu=100, sp=60),
                          full      = list(fp=0.30, ft=0.30, wu=100, sp=60))
+
 SCALE_CONFIG$sv_wfree_swfree   <- EXPENSIVE_GUESS  # sw free
-SCALE_CONFIG$sv_wfree          <- CHEAP_GUESS      # only w free (cheap) alongside sv (cheap)
-SCALE_CONFIG$free_wfree_swfree <- EXPENSIVE_GUESS  # sw AND st0 free -- likely the worst case
+SCALE_CONFIG$sv_wfree          <- CHEAP_GUESS      # only w free and sv 
+SCALE_CONFIG$free_wfree_swfree <- EXPENSIVE_GUESS  # sw AND st0 free 
 SCALE_CONFIG$free_wfree        <- EXPENSIVE_GUESS  # st0 free
 SCALE_CONFIG$zero_wfree_swfree <- EXPENSIVE_GUESS  # sw free
-SCALE_CONFIG$zero_wfree        <- CHEAP_GUESS      # only w free (cheap)
+SCALE_CONFIG$zero_wfree        <- CHEAP_GUESS      # only w free 
 SCALE_CONFIG$sv_random         <- CHEAP_GUESS      # sv always analytic regardless of structure
 
 cfg <- SCALE_CONFIG[[MODEL_VERSION]][[SCALE]]
@@ -118,9 +113,9 @@ message(sprintf("Config: MODEL_VERSION=%s, SCALE=%s, stan_file=%s, out_dir=%s",
 message(sprintf("FRAC_PARTICIPANTS=%.2f, FRAC_TRIALS=%.2f, WARMUP=%d, SAMPLING=%d",
                  FRAC_PARTICIPANTS, FRAC_TRIALS, WARMUP, SAMPLING))
 
-## ===========================================================================
-## 1. LOAD AND SUBSET DATA
-## ===========================================================================
+
+## LOAD AND SUBSET DATA
+
 raw_full <- read.csv(DATA_PATH) %>%
   transmute(participant_orig = participant_index, condition = condition,
             resp_type = pre_acc, acc = acc, rt = rt)
@@ -152,13 +147,10 @@ N <- nrow(raw)
 min_rt <- raw %>% group_by(pid) %>% summarise(min_rt = min(rt), .groups = "drop") %>%
   arrange(pid) %>% pull(min_rt)
 
-message(sprintf("Final dataset: I=%d participants, N=%d trials", I, N))
+message(sprintf("dataset: I=%d participants, N=%d trials", I, N))
 
-## ===========================================================================
-## 2. PRIORS (translated from Grabowska et al. 2025 Appendix C where possible;
-## see model_description docs from earlier in this project for the full
-## translation rationale -- unchanged from previous versions of this script)
-## ===========================================================================
+
+## PRIORS (translated from Grabowska et al. 2025)
 prior_beta_nu <- rbind(c(0, 0, 0, 0), c(2, 2, 0.5, 0.5))
 prior_beta_alpha1 <- c(0, 0.5)
 prior_beta_alpha2 <- c(0, 0.2)
@@ -174,9 +166,9 @@ prior_sigma_tau_intercept <- c(0.3, 1)
 prior_beta_sv <- c(-2, 1)              # centered near log(0.13), weakly informative
 prior_sigma_sv_intercept <- c(1, 1)    # Gamma(1,1)
 
-## ===========================================================================
-## 3. ASSEMBLE STAN DATA LIST (generic across all 10 versions via the registry)
-## ===========================================================================
+
+## STAN DATA LIST (generic across all 10 versions via the registry)
+
 stan_data <- list(
   N = N, I = I, pid = raw$pid, rt = raw$rt, acc = as.integer(raw$acc),
   condition = raw$condition, resp_type = raw$resp_type, min_rt = min_rt,
@@ -197,9 +189,8 @@ if (reg$random) {
   stan_data$prior_sigma_sv_intercept <- prior_sigma_sv_intercept
 }
 
-## ===========================================================================
-## 4. INITIAL VALUES (generic across all 10 versions via the registry)
-## ===========================================================================
+
+## INITIAL VALUES 
 init_fun <- function() {
   base <- list(
     beta_nu     = c(0, 0, 0, 0) + rnorm(4, 0, 0.05),
@@ -230,9 +221,8 @@ init_fun <- function() {
   base
 }
 
-## ===========================================================================
-## 5. COMPILE AND SAMPLE
-## ===========================================================================
+
+## COMPILE AND SAMPLE
 mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE))
 
 fit <- mod$sample(
@@ -243,9 +233,9 @@ fit <- mod$sample(
 )
 fit$save_object(file.path(out_dir, "fit.rds"))
 
-## ===========================================================================
-## 6. DIAGNOSTICS (generic across all 10 versions via the registry)
-## ===========================================================================
+
+## DIAGNOSTICS (generic across all 10 versions via the registry)
+
 group_pars <- c("beta_nu[1]", "beta_nu[2]", "beta_nu[3]", "beta_nu[4]",
                  "beta_alpha1", "beta_alpha2", "beta_alpha3", "beta_tau",
                  "sigma_nu_c", "sigma_nu_r", "sigma_nu_cr",
@@ -256,7 +246,7 @@ if (reg$random) group_pars <- c(group_pars, "beta_sv", "sigma_sv_intercept")
 summ <- fit$summary(variables = group_pars)
 print(summ, n = Inf)
 
-cat("\n=== Sampler diagnostics ===\n")
+cat("\n Sampler diagnostics \n")
 diag <- fit$diagnostic_summary()
 print(diag)
 
@@ -270,6 +260,4 @@ cat(sprintf("Min ESS bulk: %.0f\n", min(summ$ess_bulk, na.rm = TRUE)))
 
 cat(sprintf("\nRun complete: MODEL_VERSION=%s, SCALE=%s, I=%d, N=%d, %d+%d iterations.\n",
             MODEL_VERSION, SCALE, I, N, WARMUP, SAMPLING))
-cat("Recalibrate WARMUP/SAMPLING/fractions for the next scale using this run's\n",
-    "actual timing and diagnostics -- don't trust the placeholder values blindly,\n",
-    "especially for the 7 new model versions with no confirmed timing yet.\n", sep = "")
+
