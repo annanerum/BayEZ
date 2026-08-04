@@ -33,6 +33,7 @@ This is an implementation of hierarchical models using the Seven-parameter Diffu
 | `hierarchical_fullddm_no_intertrial_variability_nu_alpha.stan`| The "zero" model. The effect structure is the same for all models that we use with the Krakow data, for comparison. Meaning that nu (drift) has intercept fixed, condition/resp_type/interaction random, alpha (bound.) has intercept random (log scale), resp_type/condition fixed and tau (t0) has intercept random only. In the three models "zero", "free", or "sv_only", w (bias) is alway fixed at 0.5 and sw (variance of bias) is fixed at 0. This "zero" model also has sv (inter-trial variability in drift rate) and st0 (inter-trial variability in NDT) fixed to 0. |
 | `hierarchical_fullddm_sv_only_nu_alpha.stan` | The "sv only" modoel. Again same effect structure. This model is similar to the zero but sv (inter-trial variability in drift rate) is a free, single population value and not fixed. |
 | `hierarchical_fullddm_intertrial_variability_nu_alpha.stan` | The "free" model. bias and variance of bias are fixed, same effect structure as the other two models. But sv is a free, single population value and st0 is also a free, single population value. |
+| `grabowska_comparison_more_models.R`| A new R script that can run all 10 models and can alternate between quicksafe, tryout and full model. | 
 | `outputs` | This folder has all the estimates and figures that were saved by the script for every model. For an overview O only keep the output from the "full" models here. |
 
 
