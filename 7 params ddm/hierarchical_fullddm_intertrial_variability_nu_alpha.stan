@@ -2,7 +2,7 @@
 //   sw          : fixed at exactly 0 
 //   sv          : free, single population value (inter-trial variability in v)
 //   st0         : free, single population value (inter-trial variability in t0)
-//   needs a st0_raw reparameterization because the bound (st0 <= 2*min(t0)) depends on the per-participant t0 vector that varies
+//   --> st0_raw reparameterization because the bound (st0 <= 2*min(t0)) --> depends on the per-participant t0 vector that varies
 
 
 functions {
