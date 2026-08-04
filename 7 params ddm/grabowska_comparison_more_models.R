@@ -1,0 +1,275 @@
+#   zero               : w=0.5 fixed, sw=0 fixed, sv=0 fixed,  st0=0 fixed
+#   sv_only            : w=0.5 fixed, sw=0 fixed, sv free,     st0=0 fixed
+#   free               : w=0.5 fixed, sw=0 fixed, sv free,     st0 free
+
+#   sv_wfree_swfree    : w free,      sw free,     sv free,     st0=0 fixed
+#   sv_wfree           : w free,      sw=0 fixed, sv free,     st0=0 fixed
+#   free_wfree_swfree  : w free,      sw free,     sv free,     st0 free   (true unconstrained model)
+#   free_wfree         : w free,      sw=0 fixed, sv free,     st0 free
+#   zero_wfree_swfree  : w free,      sw free,     sv=0 fixed,  st0=0 fixed
+#   zero_wfree         : w free,      sw=0 fixed, sv=0 fixed,  st0=0 fixed
+#   sv_random          : w=0.5 fixed, sw=0 fixed, sv RANDOM per participant, st0=0 fixed
+
+library(cmdstanr)
+library(posterior)
+library(dplyr)
+library(tidyr)
+
+set.seed(42)
+
+
+
+MODEL_VERSION <- "zero"   # see the 10 names listed above
+SCALE         <- "full"  # "quicktest", "tryout", "real", or "full"
+
+# --- Registry: what each model version needs ---------------------------------
+MODEL_REGISTRY <- list(
+  zero               = list(stan_file = "hierarchical_fullddm_no_intertrial_variability_nu_alpha.stan",
+                             free_scalars = c(),                    random = FALSE),
+  sv_only            = list(stan_file = "hierarchical_fullddm_sv_only_nu_alpha.stan",
+                             free_scalars = c("sv"),                random = FALSE),
+  free               = list(stan_file = "hierarchical_fullddm_intertrial_variability_nu_alpha.stan",
+                             free_scalars = c("sv","st0"),          random = FALSE),
+  sv_wfree_swfree    = list(stan_file = "hierarchical_fullddm_sv_wfree_swfree_nu_alpha.stan",
+                             free_scalars = c("w","sv","sw"),       random = FALSE),
+  sv_wfree           = list(stan_file = "hierarchical_fullddm_sv_wfree_nu_alpha.stan",
+                             free_scalars = c("w","sv"),            random = FALSE),
+  free_wfree_swfree  = list(stan_file = "hierarchical_fullddm_free_wfree_swfree_nu_alpha.stan",
+                             free_scalars = c("w","sv","sw","st0"), random = FALSE),
+  free_wfree         = list(stan_file = "hierarchical_fullddm_free_wfree_nu_alpha.stan",
+                             free_scalars = c("w","sv","st0"),      random = FALSE),
+  zero_wfree_swfree  = list(stan_file = "hierarchical_fullddm_zero_wfree_swfree_nu_alpha.stan",
+                             free_scalars = c("w","sw"),            random = FALSE),
+  zero_wfree         = list(stan_file = "hierarchical_fullddm_zero_wfree_nu_alpha.stan",
+                             free_scalars = c("w"),                 random = FALSE),
+  sv_random          = list(stan_file = "hierarchical_fullddm_sv_random_intercept_nu_alpha.stan",
+                             free_scalars = c(),                    random = TRUE)
+)
+reg <- MODEL_REGISTRY[[MODEL_VERSION]]
+stan_file <- reg$stan_file
+
+# Stan parameter name differs from the conceptual name for sw/st0 (they're
+# "_raw" fractions internally) -- this mapping is used for init values only,
+# the transformed-parameter (sw/st0 themselves) is what gets reported.
+PARAM_STAN_NAME <- list(w = "w", sv = "sv", sw = "sw_raw", st0 = "st0_raw")
+PRIOR_DATA_NAME <- list(w = "prior_w", sv = "prior_sv", sw = "prior_sw", st0 = "prior_st0")
+DEFAULT_PRIOR   <- list(w = c(0.5, 0.1), sv = c(0.5, 0.5), sw = c(0.3, 0.2), st0 = c(0.3, 0.2))
+DEFAULT_INIT    <- list(w = 0.5, sv = 0.3, sw = 0.1, st0 = 0.1)
+
+# --- Scale settings: participant/trial fractions + iteration budget ----------
+# quicktest configs are intentionally identical and small for every version --
+# this is the "find out the real cost" step. tryout/full below are informed
+# guesses based on which mechanism (w/sv free = cheap, sw/st0 free = expensive)
+# applies to this specific version; NOT confirmed for the 7 new versions.
+SCALE_CONFIG <- list(
+  zero    = list(quicktest = list(fp=0.07, ft=0.25, wu=50,  sp=30),
+                  tryout    = list(fp=0.30, ft=0.50, wu=500, sp=300),
+                  real      = list(fp=0.50, ft=0.65, wu=3000, sp=3000),
+                  full      = list(fp=1.00, ft=1.00, wu=3000, sp=3000)),
+  sv_only = list(quicktest = list(fp=0.07, ft=0.25, wu=50,  sp=30),
+                  tryout    = list(fp=0.30, ft=0.30, wu=300, sp=200),
+                  real      = list(fp=0.50, ft=0.65, wu=2000, sp=3000),
+                  full      = list(fp=1.00, ft=1.00, wu=2000, sp=3000)),
+  free    = list(quicktest = list(fp=0.07, ft=0.25, wu=50,  sp=30),
+                  tryout    = list(fp=0.30, ft=0.50, wu=100, sp=60),
+                  real      = list(fp=0.50, ft=0.65, wu=300, sp=200),
+                  full      = list(fp=1.00, ft=1.00, wu=300, sp=200))
+)
+# The 7 new versions all start with the same conservative quicktest, and
+# tryout/full sized by expected cost class (cheap: w/sv only free; expensive:
+# sw or st0 free). Revise after each quicktest.
+CHEAP_GUESS <- list(quicktest = list(fp=0.07, ft=0.25, wu=50,  sp=30),
+                     tryout    = list(fp=0.30, ft=0.30, wu=300, sp=200),
+                     real      = list(fp=0.50, ft=0.65, wu=2000, sp=2000),
+                     full      = list(fp=1.00, ft=1.00, wu=2000, sp=2000))
+EXPENSIVE_GUESS <- list(quicktest = list(fp=0.07, ft=0.25, wu=50, sp=30),
+                         tryout    = list(fp=0.20, ft=0.20, wu=80, sp=50),
+                         real      = list(fp=0.30, ft=0.30, wu=100, sp=60),
+                         full      = list(fp=0.30, ft=0.30, wu=100, sp=60))
+SCALE_CONFIG$sv_wfree_swfree   <- EXPENSIVE_GUESS  # sw free
+SCALE_CONFIG$sv_wfree          <- CHEAP_GUESS      # only w free (cheap) alongside sv (cheap)
+SCALE_CONFIG$free_wfree_swfree <- EXPENSIVE_GUESS  # sw AND st0 free -- likely the worst case
+SCALE_CONFIG$free_wfree        <- EXPENSIVE_GUESS  # st0 free
+SCALE_CONFIG$zero_wfree_swfree <- EXPENSIVE_GUESS  # sw free
+SCALE_CONFIG$zero_wfree        <- CHEAP_GUESS      # only w free (cheap)
+SCALE_CONFIG$sv_random         <- CHEAP_GUESS      # sv always analytic regardless of structure
+
+cfg <- SCALE_CONFIG[[MODEL_VERSION]][[SCALE]]
+FRAC_PARTICIPANTS <- cfg$fp
+FRAC_TRIALS       <- cfg$ft
+WARMUP            <- cfg$wu
+SAMPLING          <- cfg$sp
+
+TREEDEPTH   <- 10
+ADAPT_DELTA <- 0.8
+REFRESH     <- 10
+
+CHAINS          <- 2
+PARALLEL_CHAINS <- 2
+N_THREADS <- max(1, parallel::detectCores() - 1)
+THREADS_PER_CHAIN <- max(1, floor(N_THREADS / PARALLEL_CHAINS))
+
+DATA_PATH <- "krakow_data_standardized.csv"
+out_dir <- sprintf("output_ddm_v2_%s_%s", MODEL_VERSION, SCALE)
+if (!dir.exists(out_dir)) dir.create(out_dir)
+
+message(sprintf("Config: MODEL_VERSION=%s, SCALE=%s, stan_file=%s, out_dir=%s",
+                 MODEL_VERSION, SCALE, stan_file, out_dir))
+message(sprintf("FRAC_PARTICIPANTS=%.2f, FRAC_TRIALS=%.2f, WARMUP=%d, SAMPLING=%d",
+                 FRAC_PARTICIPANTS, FRAC_TRIALS, WARMUP, SAMPLING))
+
+## ===========================================================================
+## 1. LOAD AND SUBSET DATA
+## ===========================================================================
+raw_full <- read.csv(DATA_PATH) %>%
+  transmute(participant_orig = participant_index, condition = condition,
+            resp_type = pre_acc, acc = acc, rt = rt)
+
+stopifnot(all(raw_full$acc %in% c(-1, 1)), all(raw_full$condition %in% c(-1, 1)),
+          all(raw_full$resp_type %in% c(-1, 1)), all(raw_full$rt > 0))
+
+all_ids <- unique(raw_full$participant_orig)
+n_keep  <- round(FRAC_PARTICIPANTS * length(all_ids))
+keep_ids <- sample(all_ids, n_keep)
+raw <- raw_full %>% filter(participant_orig %in% keep_ids)
+
+stratified_fraction <- function(df, frac) {
+  df %>%
+    group_by(participant_orig, condition, resp_type) %>%
+    group_modify(~ {
+      n_cell <- nrow(.x)
+      target <- max(1, round(frac * n_cell))
+      if (n_cell <= target) return(.x)
+      .x[sample.int(n_cell, target), , drop = FALSE]
+    }) %>%
+    ungroup()
+}
+raw <- stratified_fraction(raw, FRAC_TRIALS)
+raw <- raw %>% mutate(pid = as.integer(factor(participant_orig, levels = unique(participant_orig))))
+
+I <- max(raw$pid)
+N <- nrow(raw)
+min_rt <- raw %>% group_by(pid) %>% summarise(min_rt = min(rt), .groups = "drop") %>%
+  arrange(pid) %>% pull(min_rt)
+
+message(sprintf("Final dataset: I=%d participants, N=%d trials", I, N))
+
+## ===========================================================================
+## 2. PRIORS (translated from Grabowska et al. 2025 Appendix C where possible;
+## see model_description docs from earlier in this project for the full
+## translation rationale -- unchanged from previous versions of this script)
+## ===========================================================================
+prior_beta_nu <- rbind(c(0, 0, 0, 0), c(2, 2, 0.5, 0.5))
+prior_beta_alpha1 <- c(0, 0.5)
+prior_beta_alpha2 <- c(0, 0.2)
+prior_beta_alpha3 <- c(0, 0.3)
+prior_sigma_nu_c  <- c(1, 1)
+prior_sigma_nu_r  <- c(1, 1)
+prior_sigma_nu_cr <- c(1, 1)
+prior_sigma_alpha_intercept <- c(1, 1)
+prior_beta_tau <- c(0.4, 0.5)
+prior_sigma_tau_intercept <- c(0.3, 1)
+
+# sv_random-specific priors (log scale population mean/SD for sv[i])
+prior_beta_sv <- c(-2, 1)              # centered near log(0.13), weakly informative
+prior_sigma_sv_intercept <- c(1, 1)    # Gamma(1,1)
+
+## ===========================================================================
+## 3. ASSEMBLE STAN DATA LIST (generic across all 10 versions via the registry)
+## ===========================================================================
+stan_data <- list(
+  N = N, I = I, pid = raw$pid, rt = raw$rt, acc = as.integer(raw$acc),
+  condition = raw$condition, resp_type = raw$resp_type, min_rt = min_rt,
+  grainsize = 1L,
+  prior_beta_nu = prior_beta_nu,
+  prior_beta_alpha1 = prior_beta_alpha1, prior_beta_alpha2 = prior_beta_alpha2,
+  prior_beta_alpha3 = prior_beta_alpha3, prior_beta_tau = prior_beta_tau,
+  prior_sigma_nu_c = prior_sigma_nu_c, prior_sigma_nu_r = prior_sigma_nu_r,
+  prior_sigma_nu_cr = prior_sigma_nu_cr,
+  prior_sigma_alpha_intercept = prior_sigma_alpha_intercept,
+  prior_sigma_tau_intercept = prior_sigma_tau_intercept
+)
+for (nm in reg$free_scalars) {
+  stan_data[[PRIOR_DATA_NAME[[nm]]]] <- DEFAULT_PRIOR[[nm]]
+}
+if (reg$random) {
+  stan_data$prior_beta_sv <- prior_beta_sv
+  stan_data$prior_sigma_sv_intercept <- prior_sigma_sv_intercept
+}
+
+## ===========================================================================
+## 4. INITIAL VALUES (generic across all 10 versions via the registry)
+## ===========================================================================
+init_fun <- function() {
+  base <- list(
+    beta_nu     = c(0, 0, 0, 0) + rnorm(4, 0, 0.05),
+    beta_alpha1 = 0 + rnorm(1, 0, 0.05),
+    beta_alpha2 = 0 + rnorm(1, 0, 0.02),
+    beta_alpha3 = 0 + rnorm(1, 0, 0.02),
+    beta_tau    = 0.4 + rnorm(1, 0, 0.05),
+    sigma_nu_c  = 0.5 + runif(1, 0, 0.1),
+    sigma_nu_r  = 0.3 + runif(1, 0, 0.05),
+    sigma_nu_cr = 0.3 + runif(1, 0, 0.05),
+    sigma_alpha_intercept = 0.3 + runif(1, 0, 0.05),
+    sigma_tau_intercept   = 0.3 + runif(1, 0, 0.05),
+    z_nu_c  = rnorm(I, 0, 0.1),
+    z_nu_r  = rnorm(I, 0, 0.1),
+    z_nu_cr = rnorm(I, 0, 0.1),
+    z_alpha_intercept = rnorm(I, 0, 0.1),
+    z_tau_intercept   = rnorm(I, 0, 0.1)
+  )
+  for (nm in reg$free_scalars) {
+    jitter <- if (nm %in% c("w")) runif(1, -0.02, 0.02) else runif(1, 0, 0.05)
+    base[[PARAM_STAN_NAME[[nm]]]] <- DEFAULT_INIT[[nm]] + jitter
+  }
+  if (reg$random) {
+    base$beta_sv <- -2 + rnorm(1, 0, 0.1)
+    base$sigma_sv_intercept <- 0.3 + runif(1, 0, 0.05)
+    base$z_sv <- rnorm(I, 0, 0.1)
+  }
+  base
+}
+
+## ===========================================================================
+## 5. COMPILE AND SAMPLE
+## ===========================================================================
+mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE))
+
+fit <- mod$sample(
+  data = stan_data, chains = CHAINS, parallel_chains = PARALLEL_CHAINS,
+  threads_per_chain = THREADS_PER_CHAIN, iter_warmup = WARMUP, iter_sampling = SAMPLING,
+  max_treedepth = TREEDEPTH, adapt_delta = ADAPT_DELTA, refresh = REFRESH,
+  init = init_fun, save_warmup = TRUE, output_dir = out_dir
+)
+fit$save_object(file.path(out_dir, "fit.rds"))
+
+## ===========================================================================
+## 6. DIAGNOSTICS (generic across all 10 versions via the registry)
+## ===========================================================================
+group_pars <- c("beta_nu[1]", "beta_nu[2]", "beta_nu[3]", "beta_nu[4]",
+                 "beta_alpha1", "beta_alpha2", "beta_alpha3", "beta_tau",
+                 "sigma_nu_c", "sigma_nu_r", "sigma_nu_cr",
+                 "sigma_alpha_intercept", "sigma_tau_intercept")
+for (nm in reg$free_scalars) group_pars <- c(group_pars, nm)  # transformed parameter, not the _raw one
+if (reg$random) group_pars <- c(group_pars, "beta_sv", "sigma_sv_intercept")
+
+summ <- fit$summary(variables = group_pars)
+print(summ, n = Inf)
+
+cat("\n=== Sampler diagnostics ===\n")
+diag <- fit$diagnostic_summary()
+print(diag)
+
+n_total_transitions <- SAMPLING * CHAINS
+cat(sprintf("\nMax treedepth hit rate: %d / %d (%.0f%%)\n",
+            sum(diag$num_max_treedepth), n_total_transitions,
+            100 * sum(diag$num_max_treedepth) / n_total_transitions))
+cat(sprintf("Divergences: %d\n", sum(diag$num_divergent)))
+cat(sprintf("Max Rhat: %.4f\n", max(summ$rhat, na.rm = TRUE)))
+cat(sprintf("Min ESS bulk: %.0f\n", min(summ$ess_bulk, na.rm = TRUE)))
+
+cat(sprintf("\nRun complete: MODEL_VERSION=%s, SCALE=%s, I=%d, N=%d, %d+%d iterations.\n",
+            MODEL_VERSION, SCALE, I, N, WARMUP, SAMPLING))
+cat("Recalibrate WARMUP/SAMPLING/fractions for the next scale using this run's\n",
+    "actual timing and diagnostics -- don't trust the placeholder values blindly,\n",
+    "especially for the 7 new model versions with no confirmed timing yet.\n", sep = "")
