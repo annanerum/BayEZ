@@ -22,7 +22,7 @@ set.seed(42)
 MODEL_VERSION <- "zero"   
 SCALE         <- "full"  # "quicktest", "tryout", or "full"
 
-# --- Registry: what each model version needs ---------------------------------
+
 MODEL_REGISTRY <- list(
   zero               = list(stan_file = "hierarchical_fullddm_no_intertrial_variability_nu_alpha.stan",
                              free_scalars = c(),                    random = FALSE),
