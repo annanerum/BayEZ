@@ -261,3 +261,262 @@ cat(sprintf("Min ESS bulk: %.0f\n", min(summ$ess_bulk, na.rm = TRUE)))
 cat(sprintf("\nRun complete: MODEL_VERSION=%s, SCALE=%s, I=%d, N=%d, %d+%d iterations.\n",
             MODEL_VERSION, SCALE, I, N, WARMUP, SAMPLING))
 
+## figures and estimates
+
+library(posterior)
+library(ggplot2)
+
+OUT <- file.path(out_dir, "figures")
+if (!dir.exists(OUT)) dir.create(OUT, recursive = TRUE)
+
+
+## POSTERIORS 
+draws_beta_nu   <- as.matrix(fit$draws(variables = "beta_nu", format = "matrix"))
+draws_nu_c      <- as.matrix(fit$draws(variables = "nu_c", format = "matrix"))
+draws_nu_r      <- as.matrix(fit$draws(variables = "nu_r", format = "matrix"))
+draws_nu_cr     <- as.matrix(fit$draws(variables = "nu_cr", format = "matrix"))
+draws_alpha_int <- as.matrix(fit$draws(variables = "alpha_intercept", format = "matrix"))
+draws_alpha2    <- as.numeric(fit$draws(variables = "beta_alpha2", format = "matrix")[, 1])
+draws_alpha3    <- as.numeric(fit$draws(variables = "beta_alpha3", format = "matrix")[, 1])
+draws_t0        <- as.matrix(fit$draws(variables = "t0", format = "matrix"))
+
+n_draws <- nrow(draws_beta_nu)
+
+cond_k <- c( 1,  1, -1, -1)
+resp_k <- c( 1, -1,  1, -1)
+CELL_LABELS <- c("cong/post-corr", "cong/post-err", "incong/post-corr", "incong/post-err")
+
+nu_draws <- array(NA_real_, dim = c(n_draws, I, 4))
+for (k in 1:4) {
+  nu_draws[, , k] <- matrix(draws_beta_nu[, 1], nrow = n_draws, ncol = I) +
+    draws_nu_c  * cond_k[k] + draws_nu_r * resp_k[k] + draws_nu_cr * (cond_k[k] * resp_k[k])
+}
+
+alpha_draws <- array(NA_real_, dim = c(n_draws, I, 4))
+for (k in 1:4) {
+  log_alpha_k <- draws_alpha_int + draws_alpha2 * resp_k[k] + draws_alpha3 * cond_k[k]
+  alpha_draws[, , k] <- exp(log_alpha_k)
+}
+
+tau_draws <- draws_t0
+
+
+## POPULATION-LEVEL ESTIMATES CSV 
+group_pars <- c("beta_nu[1]", "beta_nu[2]", "beta_nu[3]", "beta_nu[4]",
+                "beta_alpha1", "beta_alpha2", "beta_alpha3", "beta_tau",
+                "sigma_nu_c", "sigma_nu_r", "sigma_nu_cr",
+                "sigma_alpha_intercept", "sigma_tau_intercept")
+group_pars <- c(group_pars, reg$free_scalars)  # w/sv/sw/st0, whichever apply here
+if (reg$random) group_pars <- c(group_pars, "beta_sv", "sigma_sv_intercept")
+
+summ <- fit$summary(
+  variables = group_pars,
+  mean = mean, sd = sd,
+  ~quantile(.x, probs = c(0.025, 0.975)),
+  rhat = rhat, ess_bulk = ess_bulk
+)
+names(summ)[names(summ) == "2.5%"]  <- "lo95"
+names(summ)[names(summ) == "97.5%"] <- "hi95"
+
+write.csv(summ, file.path(OUT, "ddm_estimates.csv"), row.names = FALSE)
+message("Saved population-level estimates to ddm_estimates.csv")
+
+
+## PERSON x CELL ESTIMATES CSV
+
+person_cell_df <- bind_rows(lapply(1:4, function(k) {
+  data.frame(
+    participant = 1:I, cell = k, cell_label = CELL_LABELS[k],
+    nu_mean    = colMeans(nu_draws[, , k]),
+    nu_lo95    = apply(nu_draws[, , k], 2, quantile, 0.025),
+    nu_hi95    = apply(nu_draws[, , k], 2, quantile, 0.975),
+    alpha_mean = colMeans(alpha_draws[, , k]),
+    alpha_lo95 = apply(alpha_draws[, , k], 2, quantile, 0.025),
+    alpha_hi95 = apply(alpha_draws[, , k], 2, quantile, 0.975)
+  )
+}))
+person_tau_df <- data.frame(
+  participant = 1:I,
+  tau_mean = colMeans(tau_draws),
+  tau_lo95 = apply(tau_draws, 2, quantile, 0.025),
+  tau_hi95 = apply(tau_draws, 2, quantile, 0.975)
+)
+write.csv(person_cell_df, file.path(OUT, "ddm_person_cell_estimates.csv"), row.names = FALSE)
+write.csv(person_tau_df,  file.path(OUT, "ddm_person_tau_estimates.csv"),  row.names = FALSE)
+message("Saved person x cell estimates to ddm_person_cell_estimates.csv / ddm_person_tau_estimates.csv")
+
+# sv_random version only: sv is per-participant, saved separately
+draws_sv_person <- NULL
+if (reg$random) {
+  draws_sv_person <- as.matrix(fit$draws(variables = "sv", format = "matrix"))
+  person_sv_df <- data.frame(
+    participant = 1:I,
+    sv_mean = colMeans(draws_sv_person),
+    sv_lo95 = apply(draws_sv_person, 2, quantile, 0.025),
+    sv_hi95 = apply(draws_sv_person, 2, quantile, 0.975)
+  )
+  write.csv(person_sv_df, file.path(OUT, "ddm_person_sv_estimates.csv"), row.names = FALSE)
+  message("Saved person-level sv estimates to ddm_person_sv_estimates.csv")
+}
+
+
+## PLOTS 
+dark <- theme_minimal(base_size = 12) +
+  theme(
+    plot.background   = element_rect(fill = "#1e1e1e", colour = NA),
+    panel.background  = element_rect(fill = "#1e1e1e", colour = NA),
+    panel.grid.major  = element_line(colour = "#333333"),
+    panel.grid.minor  = element_blank(),
+    text              = element_text(colour = "white"),
+    axis.text         = element_text(colour = "white"),
+    strip.text        = element_text(colour = "white"),
+    legend.background = element_rect(fill = "#1e1e1e"),
+    legend.text       = element_text(colour = "white"),
+    axis.title        = element_text(colour = "white")
+  )
+sv_plot <- function(p, nm, w = 10, h = 7)
+  ggsave(file.path(OUT, nm), p, width = w, height = h, dpi = 300, bg = "#1e1e1e")
+
+# population effects forest (nu/alpha/tau) 
+grp_vars   <- c("beta_nu[1]","beta_nu[2]","beta_nu[3]","beta_nu[4]",
+                "beta_alpha1","beta_alpha2","beta_alpha3","beta_tau")
+grp_labels <- c("mu_nu (intercept)","b_nu_condition","b_nu_resp_type","b_nu_interaction",
+                "mu_alpha (log-scale intercept)","b_alpha_resp_type (log)","b_alpha_condition (log)",
+                "mu_tau (logit-of-min_rt scale)")
+grp_types  <- c("nu","nu","nu","nu","alpha","alpha","alpha","tau")
+
+grp_summ <- fit$summary(variables = grp_vars, mean = mean,
+                        ~quantile(.x, probs = c(0.125, 0.875)),
+                        ~quantile(.x, probs = c(0.025, 0.975)))
+grp_df <- data.frame(
+  param = grp_labels, type = grp_types, mean = grp_summ$mean,
+  lo50 = grp_summ$`12.5%`, hi50 = grp_summ$`87.5%`,
+  lo95 = grp_summ$`2.5%`,  hi95 = grp_summ$`97.5%`
+)
+p_forest_group <- ggplot(grp_df, aes(x = mean, xmin = lo95, xmax = hi95,
+                                     y = reorder(param, mean), colour = type)) +
+  geom_vline(xintercept = 0, colour = "white", linetype = "dashed") +
+  geom_errorbarh(aes(xmin = lo95, xmax = hi95), height = 0, linewidth = 1.2, alpha = 0.4) +
+  geom_errorbarh(aes(xmin = lo50, xmax = hi50), height = 0, linewidth = 2.5, alpha = 0.8) +
+  geom_point(size = 3) +
+  scale_colour_manual(values = c(nu = "steelblue", alpha = "#e07070", tau = "goldenrod")) +
+  labs(title = paste0("Population effects  ", MODEL_VERSION),
+       subtitle = "Thick bar = 50% CI | thin bar = 95% CI. note: nu/alpha/tau on different scales",
+       x = "Posterior mean", y = NULL, colour = "Parameter") +
+  dark
+sv_plot(p_forest_group, "ddm_forest_group.png", h = 6)
+
+# random-effect SDs forest
+sd_vars   <- c("sigma_nu_c","sigma_nu_r","sigma_nu_cr","sigma_alpha_intercept","sigma_tau_intercept")
+sd_labels <- c("sigma_nu_cond (slope)","sigma_nu_resp (slope)","sigma_nu_cr (slope)",
+               "sigma_alpha (intercept)","sigma_tau (intercept)")
+sd_types  <- c("slope","slope","slope","intercept","intercept")
+sd_summ <- fit$summary(variables = sd_vars, mean = mean,
+                       ~quantile(.x, probs = c(0.125, 0.875)),
+                       ~quantile(.x, probs = c(0.025, 0.975)))
+sd_df <- data.frame(
+  param = sd_labels, type = sd_types, mean = sd_summ$mean,
+  lo50 = sd_summ$`12.5%`, hi50 = sd_summ$`87.5%`,
+  lo95 = sd_summ$`2.5%`, hi95 = sd_summ$`97.5%`
+)
+p_forest_sds <- ggplot(sd_df, aes(x = mean, xmin = lo95, xmax = hi95,
+                                  y = reorder(param, mean), colour = type)) +
+  geom_vline(xintercept = 0, colour = "white", linetype = "dashed") +
+  geom_errorbarh(aes(xmin = lo95, xmax = hi95), height = 0, linewidth = 1.2, alpha = 0.4) +
+  geom_errorbarh(aes(xmin = lo50, xmax = hi50), height = 0, linewidth = 2.5, alpha = 0.8) +
+  geom_point(size = 3) +
+  scale_colour_manual(values = c(slope = "steelblue", intercept = "seagreen")) +
+  labs(title = paste0("Between-person SDs  ", MODEL_VERSION),
+       subtitle = "Thick bar = 50% CI, thin bar = 95% CI. No EZ-style residual SD exists in this model.",
+       x = "Posterior mean", y = NULL, colour = NULL) +
+  dark
+sv_plot(p_forest_sds, "ddm_forest_sds.png", h = 6)
+
+# NEW: forest plot for whichever of w/sv/sw/st0 are free in THIS version
+if (length(reg$free_scalars) > 0) {
+  extras_summ <- fit$summary(variables = reg$free_scalars, mean = mean,
+                             ~quantile(.x, probs = c(0.125, 0.875)),
+                             ~quantile(.x, probs = c(0.025, 0.975)))
+  extras_df <- data.frame(
+    param = reg$free_scalars, mean = extras_summ$mean,
+    lo50 = extras_summ$`12.5%`, hi50 = extras_summ$`87.5%`,
+    lo95 = extras_summ$`2.5%`, hi95 = extras_summ$`97.5%`
+  )
+  p_extras <- ggplot(extras_df, aes(x = mean, xmin = lo95, xmax = hi95, y = param)) +
+    geom_vline(xintercept = 0, colour = "white", linetype = "dashed") +
+    geom_errorbarh(aes(xmin = lo95, xmax = hi95), height = 0, linewidth = 1.2, alpha = 0.4, colour = "orchid") +
+    geom_errorbarh(aes(xmin = lo50, xmax = hi50), height = 0, linewidth = 2.5, alpha = 0.8, colour = "orchid") +
+    geom_point(size = 3, colour = "orchid") +
+    labs(title = paste0("Free DDM-extra parameters  ", MODEL_VERSION),
+         subtitle = "w, sv, sw, st0 --> whichever are free in this version",
+         x = "Posterior mean", y = NULL) +
+    dark
+  sv_plot(p_extras, "ddm_forest_extras.png", h = 4)
+}
+
+# individual (caterpillar) plots
+make_caterpillar <- function(values_matrix, pop_mean, title_str, col) {
+  df <- data.frame(
+    mean = colMeans(values_matrix),
+    lo95 = apply(values_matrix, 2, quantile, 0.025),
+    hi95 = apply(values_matrix, 2, quantile, 0.975)
+  ) %>% arrange(mean) %>% mutate(rank = seq_len(I))
+  ggplot(df, aes(x = rank, y = mean, ymin = lo95, ymax = hi95)) +
+    geom_hline(yintercept = 0,        colour = "white",    linetype = "dashed") +
+    geom_hline(yintercept = pop_mean, colour = "goldenrod", linewidth = 0.8) +
+    geom_errorbar(colour = col, width = 0, alpha = 0.4) +
+    geom_point(size = 0.8, colour = col) +
+    labs(title = title_str, subtitle = "Sorted by posterior mean, gold = population mean",
+         x = "Participant rank", y = "Value") +
+    dark
+}
+
+pm <- function(vname) fit$summary(variables = vname, mean = mean)$mean
+
+sv_plot(make_caterpillar(draws_nu_c,  pm("beta_nu[2]"), "Condition slope on nu",   "steelblue"),
+        "ddm_caterpillar_nu_c.png")
+sv_plot(make_caterpillar(draws_nu_r,  pm("beta_nu[3]"), "Resp_type slope on nu",   "steelblue"),
+        "ddm_caterpillar_nu_r.png")
+sv_plot(make_caterpillar(draws_nu_cr, pm("beta_nu[4]"), "Interaction slope on nu", "steelblue"),
+        "ddm_caterpillar_nu_cr.png")
+
+alpha_int_natural <- exp(draws_alpha_int)
+sv_plot(make_caterpillar(alpha_int_natural, exp(pm("beta_alpha1")),
+                         "Individual intercepts, alpha (natural scale)", "seagreen"),
+        "ddm_caterpillar_alpha_intercept.png")
+sv_plot(make_caterpillar(tau_draws, mean(colMeans(tau_draws)),
+                         "Individual non-decision times, tau (seconds)", "seagreen"),
+        "ddm_caterpillar_tau.png")
+
+# sv_random version only: person-level sv caterpillar plot
+if (reg$random) {
+  sv_plot(make_caterpillar(draws_sv_person, exp(pm("beta_sv")),
+                           "Individual trial-to-trial drift noise, sv (natural scale)", "orchid"),
+          "ddm_caterpillar_sv.png")
+}
+
+# cell-level violin plots (nu and alpha only, tau has no cell variation)
+make_cell_df <- function(draws_arr) {
+  bind_rows(lapply(1:4, function(k) {
+    data.frame(value = colMeans(draws_arr[, , k]), cell = k,
+               cell_label = factor(CELL_LABELS[k], levels = CELL_LABELS))
+  }))
+}
+CELL_COLOURS <- c("goldenrod", "steelblue", "#e07070", "#a070e0")
+plot_cells <- function(df, par_name) {
+  ggplot(df, aes(x = cell_label, y = value, fill = cell_label, colour = cell_label)) +
+    geom_violin(alpha = 0.25, linewidth = 0.4) +
+    geom_jitter(width = 0.15, size = 0.5, alpha = 0.4) +
+    stat_summary(fun = mean, geom = "point", size = 3, colour = "white", shape = 18) +
+    scale_fill_manual(values = CELL_COLOURS) +
+    scale_colour_manual(values = CELL_COLOURS) +
+    labs(title = paste0("Cell-level, ", par_name, " posterior means  ", MODEL_VERSION),
+         subtitle = "Diamond = cell mean, each dot = one participant",
+         x = NULL, y = par_name) +
+    dark + theme(legend.position = "none", axis.text.x = element_text(angle = 20, hjust = 1))
+}
+sv_plot(plot_cells(make_cell_df(nu_draws),    "nu"),    "ddm_cells_nu.png")
+sv_plot(plot_cells(make_cell_df(alpha_draws), "alpha"), "ddm_cells_alpha.png")
+
+cat(sprintf("\nAll estimates and plots saved to: %s\n", OUT))
+
