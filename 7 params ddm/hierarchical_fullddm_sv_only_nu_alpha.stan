@@ -1,7 +1,7 @@
 //   w (bias)    : fixed at 0.5
 //   sw          : fixed at 0
 //   sv          : free, single population value (inter-trial variability in v)
-//   st0         : fixed at 0 (different from the "free" version)
+//   st0         : fixed at 0 
 
 // effect structure on nu/alpha/tau same as both other versions
 
