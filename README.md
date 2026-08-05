@@ -29,10 +29,18 @@ This is an implementation of hierarchical models using the Seven-parameter Diffu
 
 | File | Description |
 |------|-------------|
-| `full_DDM_grabowska_comparison.R`| Runs three models in quicktest (super fast check whether the model has any misspecifications or errors), tryout and full mode: "zero", "free", or "sv_only". |
+| `full_DDM_grabowska_comparison.R`| Runs three models in quicktest (super fast check whether the model has any misspecifications or errors), tryout and full mode: "zero" (hierarchical_fullddm_no_intertrial_variability_nu_alpha.stan), "free" (hierarchical_fullddm_intertrial_variability_nu_alpha.stan), or "sv_only" (hierarchical_fullddm_sv_only_nu_alpha.stan). |
 | `hierarchical_fullddm_no_intertrial_variability_nu_alpha.stan`| The "zero" model. The effect structure is the same for all models that we use with the Krakow data, for comparison. Meaning that nu (drift) has intercept fixed, condition/resp_type/interaction random, alpha (bound.) has intercept random (log scale), resp_type/condition fixed and tau (t0) has intercept random only. In the three models "zero", "free", or "sv_only", w (bias) is alway fixed at 0.5 and sw (variance of bias) is fixed at 0. This "zero" model also has sv (inter-trial variability in drift rate) and st0 (inter-trial variability in NDT) fixed to 0. |
 | `hierarchical_fullddm_sv_only_nu_alpha.stan` | The "sv only" modoel. Again same effect structure. This model is similar to the zero but sv (inter-trial variability in drift rate) is a free, single population value and not fixed. |
 | `hierarchical_fullddm_intertrial_variability_nu_alpha.stan` | The "free" model. bias and variance of bias are fixed, same effect structure as the other two models. But sv is a free, single population value and st0 is also a free, single population value. |
+| `grabowska_comparison_more_models.R`| A new R script that can run all 10 models and can alternate between quicksafe, tryout and full model. | 
+| `hierarchical_fullddm_free_wfree_nu_alpha.stan`| Model with: w (starting point bias) being a free, single population value and sw (the variance of the bias) fixed at 0. here, sv is a free, single population value and st0 is also a free, single population value.|
+| `hierarchical_fullddm_free_wfree_swfree_nu_alpha.stan`| This model is the unconstrained 7-parameter model, nothing is fixed except nu/alpha/tau random/fixed effect structure. Here, w, sv, st0, and sw are free, single population values.|
+| `hierarchical_fullddm_sv_random_intercept_nu_alpha.stan`| In this model, the bias and variance of bias are fixed (to 0.5 and 0 respectively), and st0 is also fixed. However, sv is random per participant, each person has their own level of trial-to-trial drift noise: sv[i] = exp(mu_sv + sigma_sv*z_sv[i]). |
+| `hierarchical_fullddm_sv_wfree_nu_alpha.stan`| In this model, the bias (w) and the inter-trial variability in drift rate (sv) are free, single population values. sw and st0 are fixed at 0.|
+| `hierarchical_fullddm_sv_wfree_swfree_nu_alpha.stan`| This model only fixes st0 at 0, while w, sw and sv are free, single population values.|
+| `hierarchical_fullddm_zero_wfree_nu_alpha.stan` | This model has sw, sv and st0 fixed at 0 and only the bias (w) can very as a free, single population value. |
+| `hierarchical_fullddm_zero_wfree_swfree_nu_alpha.stan` | In this model, the inter-trial variabilities of drift and NDT (sv and st0) are fixed to 0, the starting point bias (w) and its variance (sw) are estimated as free, single population values.|
 | `outputs` | This folder has all the estimates and figures that were saved by the script for every model. For an overview O only keep the output from the "full" models here. |
 
 
