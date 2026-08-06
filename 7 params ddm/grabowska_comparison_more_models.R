@@ -3,12 +3,23 @@
 #   free               : w=0.5 fixed, sw=0 fixed, sv free,     st0 free
 
 #   sv_wfree_swfree    : w free,      sw free,     sv free,     st0=0 fixed
+# --> full version runs about an hour for sampling 
+
 #   sv_wfree           : w free,      sw=0 fixed, sv free,     st0=0 fixed
+# --> full version runs pretty fast, about 45 min for sampling 
+
 #   free_wfree_swfree  : w free,      sw free,     sv free,     st0 free   (full 7 params ddm)
+
 #   free_wfree         : w free,      sw=0 fixed, sv free,     st0 free
+# --> got stuch after 9 hours in 6% warmup
+
 #   zero_wfree_swfree  : w free,      sw free,     sv=0 fixed,  st0=0 fixed
+# --> samping needed 31 minutes but a treedepth of 12 and dapt delta of 0.9
+
 #   zero_wfree         : w free,      sw=0 fixed, sv=0 fixed,  st0=0 fixed
+
 #   sv_random          : w=0.5 fixed, sw=0 fixed, sv RANDOM per participant, st0=0 fixed
+# --> full version runs about 90 minutes for only sampling
 
 library(cmdstanr)
 library(posterior)
@@ -19,31 +30,31 @@ set.seed(42)
 
 
 
-MODEL_VERSION <- "zero"   
+MODEL_VERSION <- "free_wfree"   
 SCALE         <- "full"  # "quicktest", "tryout", or "full"
 
 
 MODEL_REGISTRY <- list(
   zero               = list(stan_file = "hierarchical_fullddm_no_intertrial_variability_nu_alpha.stan",
-                             free_scalars = c(),                    random = FALSE),
+                            free_scalars = c(),                    random = FALSE),
   sv_only            = list(stan_file = "hierarchical_fullddm_sv_only_nu_alpha.stan",
-                             free_scalars = c("sv"),                random = FALSE),
+                            free_scalars = c("sv"),                random = FALSE),
   free               = list(stan_file = "hierarchical_fullddm_intertrial_variability_nu_alpha.stan",
-                             free_scalars = c("sv","st0"),          random = FALSE),
+                            free_scalars = c("sv","st0"),          random = FALSE),
   sv_wfree_swfree    = list(stan_file = "hierarchical_fullddm_sv_wfree_swfree_nu_alpha.stan",
-                             free_scalars = c("w","sv","sw"),       random = FALSE),
+                            free_scalars = c("w","sv","sw"),       random = FALSE),
   sv_wfree           = list(stan_file = "hierarchical_fullddm_sv_wfree_nu_alpha.stan",
-                             free_scalars = c("w","sv"),            random = FALSE),
+                            free_scalars = c("w","sv"),            random = FALSE),
   free_wfree_swfree  = list(stan_file = "hierarchical_fullddm_free_wfree_swfree_nu_alpha.stan",
-                             free_scalars = c("w","sv","sw","st0"), random = FALSE),
+                            free_scalars = c("w","sv","sw","st0"), random = FALSE),
   free_wfree         = list(stan_file = "hierarchical_fullddm_free_wfree_nu_alpha.stan",
-                             free_scalars = c("w","sv","st0"),      random = FALSE),
+                            free_scalars = c("w","sv","st0"),      random = FALSE),
   zero_wfree_swfree  = list(stan_file = "hierarchical_fullddm_zero_wfree_swfree_nu_alpha.stan",
-                             free_scalars = c("w","sw"),            random = FALSE),
+                            free_scalars = c("w","sw"),            random = FALSE),
   zero_wfree         = list(stan_file = "hierarchical_fullddm_zero_wfree_nu_alpha.stan",
-                             free_scalars = c("w"),                 random = FALSE),
+                            free_scalars = c("w"),                 random = FALSE),
   sv_random          = list(stan_file = "hierarchical_fullddm_sv_random_intercept_nu_alpha.stan",
-                             free_scalars = c(),                    random = TRUE)
+                            free_scalars = c(),                    random = TRUE)
 )
 reg <- MODEL_REGISTRY[[MODEL_VERSION]]
 stan_file <- reg$stan_file
@@ -57,29 +68,29 @@ DEFAULT_INIT    <- list(w = 0.5, sv = 0.3, sw = 0.1, st0 = 0.1)
 
 SCALE_CONFIG <- list(
   zero    = list(quicktest = list(fp=0.07, ft=0.25, wu=50,  sp=30),
-                  tryout    = list(fp=0.30, ft=0.50, wu=500, sp=300),
-                  real      = list(fp=0.50, ft=0.65, wu=3000, sp=3000),
-                  full      = list(fp=1.00, ft=1.00, wu=3000, sp=3000)),
+                 tryout    = list(fp=0.30, ft=0.50, wu=500, sp=300),
+                 real      = list(fp=0.50, ft=0.65, wu=3000, sp=3000),
+                 full      = list(fp=1.00, ft=1.00, wu=3000, sp=3000)),
   sv_only = list(quicktest = list(fp=0.07, ft=0.25, wu=50,  sp=30),
-                  tryout    = list(fp=0.30, ft=0.30, wu=300, sp=200),
-                  real      = list(fp=0.50, ft=0.65, wu=2000, sp=3000),
-                  full      = list(fp=1.00, ft=1.00, wu=2000, sp=3000)),
+                 tryout    = list(fp=0.30, ft=0.30, wu=300, sp=200),
+                 real      = list(fp=0.50, ft=0.65, wu=2000, sp=3000),
+                 full      = list(fp=1.00, ft=1.00, wu=2000, sp=3000)),
   free    = list(quicktest = list(fp=0.07, ft=0.25, wu=50,  sp=30),
-                  tryout    = list(fp=0.30, ft=0.50, wu=100, sp=60),
-                  real      = list(fp=0.50, ft=0.65, wu=300, sp=200),
-                  full      = list(fp=1.00, ft=1.00, wu=300, sp=200))
+                 tryout    = list(fp=0.30, ft=0.50, wu=100, sp=60),
+                 real      = list(fp=0.50, ft=0.65, wu=300, sp=200),
+                 full      = list(fp=1.00, ft=1.00, wu=300, sp=200))
 )
 
 
 
 CHEAP_GUESS <- list(quicktest = list(fp=0.07, ft=0.25, wu=50,  sp=30),
-                     tryout    = list(fp=0.30, ft=0.30, wu=300, sp=200),
-                     real      = list(fp=0.50, ft=0.65, wu=2000, sp=2000),
-                     full      = list(fp=1.00, ft=1.00, wu=2000, sp=2000))
+                    tryout    = list(fp=0.30, ft=0.30, wu=300, sp=200),
+                    real      = list(fp=0.50, ft=0.65, wu=2000, sp=2000),
+                    full      = list(fp=1.00, ft=1.00, wu=2000, sp=2000))
 EXPENSIVE_GUESS <- list(quicktest = list(fp=0.07, ft=0.25, wu=50, sp=30),
-                         tryout    = list(fp=0.20, ft=0.20, wu=80, sp=50),
-                         real      = list(fp=0.30, ft=0.30, wu=100, sp=60),
-                         full      = list(fp=0.30, ft=0.30, wu=100, sp=60))
+                        tryout    = list(fp=0.20, ft=0.20, wu=80, sp=50),
+                        real      = list(fp=0.30, ft=0.30, wu=100, sp=60),
+                        full      = list(fp=0.30, ft=0.30, wu=100, sp=60))
 
 SCALE_CONFIG$sv_wfree_swfree   <- EXPENSIVE_GUESS  # sw free
 SCALE_CONFIG$sv_wfree          <- CHEAP_GUESS      # only w free and sv 
@@ -95,8 +106,8 @@ FRAC_TRIALS       <- cfg$ft
 WARMUP            <- cfg$wu
 SAMPLING          <- cfg$sp
 
-TREEDEPTH   <- 10
-ADAPT_DELTA <- 0.8
+TREEDEPTH   <- 12
+ADAPT_DELTA <- 0.9
 REFRESH     <- 10
 
 CHAINS          <- 2
@@ -109,9 +120,9 @@ out_dir <- sprintf("output_ddm_v2_%s_%s", MODEL_VERSION, SCALE)
 if (!dir.exists(out_dir)) dir.create(out_dir)
 
 message(sprintf("Config: MODEL_VERSION=%s, SCALE=%s, stan_file=%s, out_dir=%s",
-                 MODEL_VERSION, SCALE, stan_file, out_dir))
+                MODEL_VERSION, SCALE, stan_file, out_dir))
 message(sprintf("FRAC_PARTICIPANTS=%.2f, FRAC_TRIALS=%.2f, WARMUP=%d, SAMPLING=%d",
-                 FRAC_PARTICIPANTS, FRAC_TRIALS, WARMUP, SAMPLING))
+                FRAC_PARTICIPANTS, FRAC_TRIALS, WARMUP, SAMPLING))
 
 
 ## LOAD AND SUBSET DATA
@@ -237,9 +248,9 @@ fit$save_object(file.path(out_dir, "fit.rds"))
 ## DIAGNOSTICS (generic across all 10 versions via the registry)
 
 group_pars <- c("beta_nu[1]", "beta_nu[2]", "beta_nu[3]", "beta_nu[4]",
-                 "beta_alpha1", "beta_alpha2", "beta_alpha3", "beta_tau",
-                 "sigma_nu_c", "sigma_nu_r", "sigma_nu_cr",
-                 "sigma_alpha_intercept", "sigma_tau_intercept")
+                "beta_alpha1", "beta_alpha2", "beta_alpha3", "beta_tau",
+                "sigma_nu_c", "sigma_nu_r", "sigma_nu_cr",
+                "sigma_alpha_intercept", "sigma_tau_intercept")
 for (nm in reg$free_scalars) group_pars <- c(group_pars, nm)  # transformed parameter, not the _raw one
 if (reg$random) group_pars <- c(group_pars, "beta_sv", "sigma_sv_intercept")
 
