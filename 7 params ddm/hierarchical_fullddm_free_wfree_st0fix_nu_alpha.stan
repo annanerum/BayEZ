@@ -2,7 +2,7 @@
 //   sw : fixed at 0
 //   sv : free, single population value
 //   st0: free, single population fraction (st0_raw), applied per ppn as st0[p] = st0_raw * 2 * t0[p]
-# not bounded by min(t0) across all participants like the original free_wfree.stan
+
 
 functions {
   real partial_sum(array[] int idx_slice, int start, int end,
