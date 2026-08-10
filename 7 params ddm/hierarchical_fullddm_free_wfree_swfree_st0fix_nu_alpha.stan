@@ -1,20 +1,8 @@
 //   w  : free, single population value
-//   sw : free, single population value (sw_raw * 2*min(w,1-w)) -- unchanged,
-//        this bound depends on a single scalar (w) so has no kink problem
+//   sw : free, single population value (sw_raw * 2*min(w,1-w))
 //   sv : free, single population value
-//   st0: free, single population FRACTION (st0_raw), applied PER PARTICIPANT
-//        as st0[p] = st0_raw * 2 * t0[p] -- same fix as free_wfree_st0fix.stan,
-//        replacing the original st0 = st0_raw * 2*min(t0) (one global bound
-//        tied to the minimum t0 across ALL participants, which had a
-//        gradient kink whenever the argmin switched during sampling).
-//        CONFIRMED via free_wfree_st0fix's quicktest: this fix took a
-//        stalled (10hrs, stuck at 6% warmup) run down to a normal ~2.3hr
-//        completion at the same scale, matching the original "free" model's
-//        (w fixed) cost -- so the true unconstrained model should behave
-//        similarly now rather than compounding sw's cost with a stall.
-//
-// This is the true unconstrained 7-parameter model, nothing fixed except
-// the nu/alpha/tau random/fixed effect structure itself.
+//   st0: free, single population fraction (st0_raw), applied per ppn
+//        as st0[p] = st0_raw * 2 * t0[p] 
 
 functions {
   real partial_sum(array[] int idx_slice, int start, int end,
