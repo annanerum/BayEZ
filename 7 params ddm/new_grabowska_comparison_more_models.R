@@ -6,9 +6,15 @@ library(tidyr)
 
 set.seed(42)
 
-MODEL_VERSION <- "free_wfree_swfree_st0fix"   
-SCALE         <- "quicktest"  
+MODEL_VERSION <- "free_wfree_st0fix"   
+SCALE         <- "full"  
 
+
+# free_scalars : welche der vier DDM-Parameter (w, sv, sw, st0) im Modell frei geschätzt werden (Rest ist im Stan-Code fest fixiert)
+# st0_percapita: TRUE bei den Modellen, die personen-spezifische st0[p] = st0_raw * 2 * t0[p] Reparametrisierung nutzen
+# (kein globales min(t0) mehr, um das Problem mit dem min-RT von allen zu beheben)
+# random : TRUE nur bei der Variante in der sv selbst hierarchisch (mit Random Intercept pro Person) statt als einen 
+# population Parameter geschätzt wird 
 
 MODEL_REGISTRY <- list(
   zero               = list(stan_file = "hierarchical_fullddm_no_intertrial_variability_nu_alpha.stan",
@@ -41,7 +47,8 @@ MODEL_REGISTRY <- list(
 reg <- MODEL_REGISTRY[[MODEL_VERSION]]
 stan_file <- reg$stan_file
 
-
+# Übersetzung in die stan-Variablennamen/Datennamen/Defaults
+# sw und st0 werde im Stan-Code nicht direkt geschätzt, sondern über die raw-Reparametrisierung(sw_raw, st0_raw) 
 PARAM_STAN_NAME <- list(w = "w", sv = "sv", sw = "sw_raw", st0 = "st0_raw")
 PRIOR_DATA_NAME <- list(w = "prior_w", sv = "prior_sv", sw = "prior_sw", st0 = "prior_st0")
 DEFAULT_PRIOR   <- list(w = c(0.5, 0.1), sv = c(0.5, 0.5), sw = c(0.3, 0.2), st0 = c(0.3, 0.2))
@@ -71,13 +78,18 @@ EXPENSIVE_GUESS <- list(quicktest = list(fp=0.07, ft=0.25, wu=50, sp=30),
                          tryout    = list(fp=0.20, ft=0.20, wu=80, sp=50),
                          real      = list(fp=0.30, ft=0.30, wu=100, sp=60),
                          full      = list(fp=0.30, ft=0.30, wu=100, sp=60))
+
+
+# eigene kleinschrittigere Stufen für sv_wfree_swfree 
 SCALE_CONFIG$sv_wfree_swfree <- list(
-  
   quicktest = list(fp=0.07, ft=0.25, wu=50,  sp=30),
   tryout    = list(fp=0.30, ft=0.30, wu=200, sp=150),   
   real      = list(fp=0.50, ft=0.50, wu=500, sp=400),
   full      = list(fp=1.00, ft=0.65, wu=500, sp=400)
 )
+
+# zuordnung der restlichen Modelle zu einer der beiden Vorlagen
+# je nachdem wie rechenintensiv sie sind (vermutlich)
 SCALE_CONFIG$sv_wfree          <- CHEAP_GUESS      
 SCALE_CONFIG$free_wfree_swfree <- EXPENSIVE_GUESS  
 SCALE_CONFIG$free_wfree        <- EXPENSIVE_GUESS  
@@ -88,18 +100,22 @@ SCALE_CONFIG$zero_wfree_swfree <- EXPENSIVE_GUESS
 SCALE_CONFIG$zero_wfree        <- CHEAP_GUESS      
 SCALE_CONFIG$sv_random         <- CHEAP_GUESS      
 
+# Config für den aktiven lauf
 cfg <- SCALE_CONFIG[[MODEL_VERSION]][[SCALE]]
 FRAC_PARTICIPANTS <- cfg$fp
 FRAC_TRIALS       <- cfg$ft
 WARMUP            <- cfg$wu
 SAMPLING          <- cfg$sp
 
+# sampler settings
 TREEDEPTH   <- 10
 ADAPT_DELTA <- 0.8
 REFRESH     <- 10
 
 CHAINS          <- 2
 PARALLEL_CHAINS <- 2
+
+# threads of verfügare cores verteilen 
 N_THREADS <- max(1, parallel::detectCores() - 1)
 THREADS_PER_CHAIN <- max(1, floor(N_THREADS / PARALLEL_CHAINS))
 
@@ -113,18 +129,23 @@ message(sprintf("FRAC_PARTICIPANTS=%.2f, FRAC_TRIALS=%.2f, WARMUP=%d, SAMPLING=%
                  FRAC_PARTICIPANTS, FRAC_TRIALS, WARMUP, SAMPLING))
 
 
+# load data und alle studen samplen die nicht das full sample sind
 raw_full <- read.csv(DATA_PATH) %>%
   transmute(participant_orig = participant_index, condition = condition,
             resp_type = pre_acc, acc = acc, rt = rt)
 
+# Sanity-Checks auf erwartete Kodierung
 stopifnot(all(raw_full$acc %in% c(-1, 1)), all(raw_full$condition %in% c(-1, 1)),
           all(raw_full$resp_type %in% c(-1, 1)), all(raw_full$rt > 0))
 
+# stude 1 sub sampling (zufällige personen)
 all_ids <- unique(raw_full$participant_orig)
 n_keep  <- round(FRAC_PARTICIPANTS * length(all_ids))
 keep_ids <- sample(all_ids, n_keep)
 raw <- raw_full %>% filter(participant_orig %in% keep_ids)
 
+# stufe 2 subsampling: innerhalb jeder person stratifiziert 
+# pro condition x resp_type-Zelle einen Bruchteil (ft) der Trials ziehen
 stratified_fraction <- function(df, frac) {
   df %>%
     group_by(participant_orig, condition, resp_type) %>%
@@ -137,16 +158,23 @@ stratified_fraction <- function(df, frac) {
     ungroup()
 }
 raw <- stratified_fraction(raw, FRAC_TRIALS)
+# fortlaufende personen IDs für stan
 raw <- raw %>% mutate(pid = as.integer(factor(participant_orig, levels = unique(participant_orig))))
 
 I <- max(raw$pid)
 N <- nrow(raw)
+# min_rt pro Person aus den (ggf subgesampleten) Daten 
 min_rt <- raw %>% group_by(pid) %>% summarise(min_rt = min(rt), .groups = "drop") %>%
   arrange(pid) %>% pull(min_rt)
 
 message(sprintf("Final dataset: I=%d participants, N=%d trials", I, N))
 
 
+# Priors: gemeinsam fuer alle Modelle der Registry --> nu/alpha/tau- Effektstruktur ist ja in jedem Modell gleich
+# nur die w/sv/sw/st0 unterscheiden sich je nach Modell
+
+# # prior_beta_nu: Zeile 1 = Means, Zeile 2 = SDs, Spalten = [intercept,
+# condition, resp_type, interaction]
 prior_beta_nu <- rbind(c(0, 0, 0, 0), c(2, 2, 0.5, 0.5))
 prior_beta_alpha1 <- c(0, 0.5)
 prior_beta_alpha2 <- c(0, 0.2)
@@ -158,7 +186,9 @@ prior_sigma_alpha_intercept <- c(1, 1)
 prior_beta_tau <- c(0.4, 0.5)
 prior_sigma_tau_intercept <- c(0.3, 1)
 
-
+# Priorsfür die sv_random-Variante
+# sv hierarchisch, auf log-Skala, deshalb der negative Mean
+# entspricht exp(-2) ~ 0.14 --> sv-Baseline natürliche skala
 prior_beta_sv <- c(-2, 1)              
 prior_sigma_sv_intercept <- c(1, 1)    
 
@@ -175,9 +205,13 @@ stan_data <- list(
   prior_sigma_alpha_intercept = prior_sigma_alpha_intercept,
   prior_sigma_tau_intercept = prior_sigma_tau_intercept
 )
+
+# nur für die in diese Modell freien Parameter die passende Prior-Data-Variable ergänzen
 for (nm in reg$free_scalars) {
   stan_data[[PRIOR_DATA_NAME[[nm]]]] <- DEFAULT_PRIOR[[nm]]
 }
+# st0_percapita-Modelle brauchen den st0-Prior auch wenn "st0"  icht in free_scalars auftaucht 
+# (weil dort z.B. nur "w","sv","sw" gelistet sind, aber st0_raw trotzdem als eigener Parameter existiert)
 if (isTRUE(reg$st0_percapita)) {
   stan_data$prior_st0 <- DEFAULT_PRIOR$st0  
 }
@@ -187,6 +221,9 @@ if (reg$random) {
 }
 
 
+# init_fun: eigene Startwerte statt Stan Defaults
+# wichtig bei den bounded Parametern w/sw_raw/st0_raw nahe 0 oder 1, wo die Wiener-Likelihood numerisch instabil werden kann
+# jede Chain bekommt trotzdem eigenes Jitter um den Default, damit die Chains nicht alle exakt am selben Punkt starten
 init_fun <- function() {
   base <- list(
     beta_nu     = c(0, 0, 0, 0) + rnorm(4, 0, 0.05),
@@ -205,6 +242,10 @@ init_fun <- function() {
     z_alpha_intercept = rnorm(I, 0, 0.1),
     z_tau_intercept   = rnorm(I, 0, 0.1)
   )
+  # nur für die in diesem Modell freien Parameter Startwerte setzen
+  
+  # w bekommt ein kleineres symmetrisches Jitter um 0.5, weil w auf [0,1] bounded ist und zu
+  # grosses Jitter schnell Richtung Rand rutschen kann
   for (nm in reg$free_scalars) {
     jitter <- if (nm %in% c("w")) runif(1, -0.02, 0.02) else runif(1, 0, 0.05)
     base[[PARAM_STAN_NAME[[nm]]]] <- DEFAULT_INIT[[nm]] + jitter
@@ -221,6 +262,8 @@ init_fun <- function() {
 }
 
 
+# modell comp and fit
+
 mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE))
 
 fit <- mod$sample(
@@ -231,6 +274,8 @@ fit <- mod$sample(
 )
 fit$save_object(file.path(out_dir, "fit.rds"))
 
+
+# diagnostics: Populations-Parameter-Summary & sampler check 
 
 group_pars <- c("beta_nu[1]", "beta_nu[2]", "beta_nu[3]", "beta_nu[4]",
                  "beta_alpha1", "beta_alpha2", "beta_alpha3", "beta_tau",
@@ -243,7 +288,7 @@ if (reg$random) group_pars <- c(group_pars, "beta_sv", "sigma_sv_intercept")
 summ <- fit$summary(variables = group_pars)
 print(summ, n = Inf)
 
-cat("\n=== Sampler diagnostics ===\n")
+cat("\n Sampler diagnostics \n")
 diag <- fit$diagnostic_summary()
 print(diag)
 
@@ -264,7 +309,7 @@ library(ggplot2)
 OUT <- file.path(out_dir, "figures")
 if (!dir.exists(OUT)) dir.create(OUT, recursive = TRUE)
 
-
+# Draws extrahieren für Personen und Zellen
 draws_beta_nu   <- as.matrix(fit$draws(variables = "beta_nu", format = "matrix"))
 draws_nu_c      <- as.matrix(fit$draws(variables = "nu_c", format = "matrix"))
 draws_nu_r      <- as.matrix(fit$draws(variables = "nu_r", format = "matrix"))
@@ -276,22 +321,27 @@ draws_t0        <- as.matrix(fit$draws(variables = "t0", format = "matrix"))
 
 n_draws <- nrow(draws_beta_nu)
 
+# die gleiche 4-Zellen-Kodierung wie im EZ-Modell
+# k=1 cong/post-corr, k=2 cong/post-err, k=3 incong/post-corr, k=4 incong/post-err
 cond_k <- c( 1,  1, -1, -1)
 resp_k <- c( 1, -1,  1, -1)
 CELL_LABELS <- c("cong/post-corr", "cong/post-err", "incong/post-corr", "incong/post-err")
 
+# nu pro Draw x Person x Zelle: linearer Prädiktor direkt aus den Draws (nicht aus Posterior-Means!)
 nu_draws <- array(NA_real_, dim = c(n_draws, I, 4))
 for (k in 1:4) {
   nu_draws[, , k] <- matrix(draws_beta_nu[, 1], nrow = n_draws, ncol = I) +
     draws_nu_c  * cond_k[k] + draws_nu_r * resp_k[k] + draws_nu_cr * (cond_k[k] * resp_k[k])
 }
 
+# alpha pro Draw x Person x Zelle: exp() des log-linearen Praediktors
 alpha_draws <- array(NA_real_, dim = c(n_draws, I, 4))
 for (k in 1:4) {
   log_alpha_k <- draws_alpha_int + draws_alpha2 * resp_k[k] + draws_alpha3 * cond_k[k]
   alpha_draws[, , k] <- exp(log_alpha_k)
 }
 
+# # tau/t0 variiert nihct nach Zelle (nur nach Person)
 tau_draws <- draws_t0
 
 
@@ -303,6 +353,7 @@ group_pars <- c(group_pars, reg$free_scalars)
 if (isTRUE(reg$st0_percapita)) group_pars <- c(group_pars, "st0_raw")  
 if (reg$random) group_pars <- c(group_pars, "beta_sv", "sigma_sv_intercept")
 
+# Populations-Level-Summary mit 95% CI
 summ <- fit$summary(
   variables = group_pars,
   mean = mean, sd = sd,
@@ -411,7 +462,7 @@ p_forest_group <- ggplot(grp_df, aes(x = mean, xmin = lo95, xmax = hi95,
   dark
 sv_plot(p_forest_group, "ddm_forest_group.png", h = 6)
 
-# random-effect SDs forest -- unchanged across versions
+# random-effect SDs forest 
 sd_vars   <- c("sigma_nu_c","sigma_nu_r","sigma_nu_cr","sigma_alpha_intercept","sigma_tau_intercept")
 sd_labels <- c("sigma_nu_cond (slope)","sigma_nu_resp (slope)","sigma_nu_cr (slope)",
                "sigma_alpha (intercept)","sigma_tau (intercept)")
@@ -509,7 +560,7 @@ if (isTRUE(reg$st0_percapita)) {
           "ddm_caterpillar_st0.png")
 }
 
-# cell-level violin plots (nu and alpha only -- tau has no cell variation)
+# cell-level violin plots (nu and alpha only, tau has no cell variation)
 make_cell_df <- function(draws_arr) {
   bind_rows(lapply(1:4, function(k) {
     data.frame(value = colMeans(draws_arr[, , k]), cell = k,
