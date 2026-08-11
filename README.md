@@ -41,6 +41,8 @@ This is an implementation of hierarchical models using the Seven-parameter Diffu
 | `hierarchical_fullddm_sv_wfree_swfree_nu_alpha.stan`| This model only fixes st0 at 0, while w, sw and sv are free, single population values.|
 | `hierarchical_fullddm_zero_wfree_nu_alpha.stan` | This model has sw, sv and st0 fixed at 0 and only the bias (w) can very as a free, single population value. |
 | `hierarchical_fullddm_zero_wfree_swfree_nu_alpha.stan` | In this model, the inter-trial variabilities of drift and NDT (sv and st0) are fixed to 0, the starting point bias (w) and its variance (sw) are estimated as free, single population values.|
+| `hierarchical_fullddm_free_wfree_st0fix_nu_alpha.stan` | We fixed an issue with st0. Now st0 is a free, single population fraction (st0_raw), applied per ppn as st0[p] = st0_raw * 2 * t0[p] which makes the model run significantly faster (and therefore usable). |
+| `hierarchical_fullddm_free_wfree_swfree_st0fix_nu_alpha.stan` | We also fixed the issue with st0 here, now for the full 7-parameter DDM. |
 | `outputs` | This folder has all the estimates and figures that were saved by the script for every model. For an overview O only keep the output from the "full" models here. |
 
 
