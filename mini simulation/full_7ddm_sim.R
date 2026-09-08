@@ -2,7 +2,7 @@ library(rtdists)
 library(dplyr)
 
 n_subj        <- 100
-n_raw_trials  <- 101
+n_raw_trials  <- 101 # change to 501 for ez
 n_kept_trials <- n_raw_trials - 1
 
 true_pop <- list(
@@ -16,7 +16,7 @@ true_pop <- list(
   beta_tau = 0.30,
   w       = 0.52,
   sw      = 0.15,   
-  sv      = 0.60,   
+  sv      = 0.50,   
   st0_raw = 0.15    
 )
 
@@ -138,6 +138,4 @@ cat(sprintf("t0 outside [0.05, 0.45]: %s\n",
             any(all_t0_check$t0 < 0.05 | all_t0_check$t0 > 0.45)))
 
 cat("\nAll", n_reps, "saved under", DATA_DIR, "\n")
-
-
 

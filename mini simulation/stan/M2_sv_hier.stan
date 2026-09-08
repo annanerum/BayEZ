@@ -1,8 +1,9 @@
 //   w  : free, single population value
 //   sw : fixed at 0
-//   sv : free, HIERARCHICAL -- varies per subject (log-link, non-centered)
+//   sv : free, HIERARCHICAL 
 //   st0: fixed at 0
 // effect structure on nu/alpha/tau same as the other versions
+
 functions {
   real partial_sum(array[] int idx_slice, int start, int end,
                     vector rt, array[] int acc, array[] int pid,

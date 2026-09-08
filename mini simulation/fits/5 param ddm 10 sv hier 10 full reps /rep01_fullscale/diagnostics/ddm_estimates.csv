@@ -1,0 +1,14 @@
+"group","label","var","family","mean","q2.5","q25","q75","q97.5"
+"population","mu_nu (intercept)","beta_nu[1]","nu",1.174396801,1.09814204,1.14739005,1.200207925,1.2534421225
+"population","b_nu_condition","beta_nu[2]","nu",0.624804080315,0.503167531,0.5856883725,0.6642623725,0.74228224025
+"population","mu_tau (logit-of-min_rt scale)","beta_tau","tau",1.10251684711,1.01778703,1.073093,1.1316177,1.1863982975
+"population","b_nu_interaction","beta_nu[4]","nu",0.327020345,0.256828671,0.30330778,0.3514403475,0.39753803425
+"population","mu_alpha (log-scale intercept)","beta_alpha1","alpha",0.58961114765,0.56353396175,0.58049675,0.5986030275,0.616654907
+"population","b_nu_resp_type","beta_nu[3]","nu",0.50388350168,0.4272103725,0.478905125,0.5299687175,0.57777932125
+"population","b_alpha_condition (log)","beta_alpha3","alpha",0.049979309274,0.0397611201,0.046076735,0.05387784325,0.06122433255
+"population","b_alpha_resp_type (log)","beta_alpha2","alpha",0.022489572883,0.01028605055,0.0182188655,0.026671431,0.035547937175
+"between_person_sd","sigma_nu_c (slope)","sigma_nu_c","slope",0.50940340021,0.43136361075,0.48061548,0.53582707,0.60258535425
+"between_person_sd","sigma_nu_r (slope)","sigma_nu_r","slope",0.280378702985,0.2286945045,0.260222535,0.2992727325,0.34104066675
+"between_person_sd","sigma_tau (intercept)","sigma_tau_intercept","intercept",0.0621636069412,0.01299922725,0.0392911535,0.08147378675,0.12888556625
+"between_person_sd","sigma_nu_cr (slope)","sigma_nu_cr","slope",0.272820969215,0.2165365335,0.250968995,0.2939615175,0.3380915565
+"between_person_sd","sigma_alpha (intercept)","sigma_alpha_intercept","intercept",0.07944077245,0.065218669475,0.07384174225,0.08442303875,0.096166117925
