@@ -1,4 +1,5 @@
-//   nu : intercept + condition + response_type + condition*response_type
+//   nu : intercept + condition + response_type +
+// condition*response_type
 //   alpha : intercept + response_type + condition
 //   tau : intercept only
 
@@ -11,7 +12,6 @@
 // alpha	Condition	Fixed (beta_alpha[3]) !!
 // tau	Intercept	Random (tau_intercept[i])
 
-// PRIOR CHANGES vs. the previous "final" version, to match Grabowska et al.
 
 // 4 cells 
 // k=1: cond= 1, resp= 1   k=2: cond= 1, resp=-1
@@ -122,7 +122,7 @@ model {
     beta_alpha[p] ~ normal(prior_beta_alpha[1, p], prior_beta_alpha[2, p]);
   beta_tau ~ normal(prior_beta_tau[1, 1], prior_beta_tau[2, 1]);
 
-  // residual SDs (no Grabowska equivalent, EZ-specific, left as normal())
+  // residual SDs 
   sigma_nu    ~ normal(prior_sigma_nu[1],    prior_sigma_nu[2]);
   sigma_alpha ~ normal(prior_sigma_alpha[1], prior_sigma_alpha[2]);
   sigma_tau   ~ normal(prior_sigma_tau[1],   prior_sigma_tau[2]);
@@ -130,8 +130,7 @@ model {
   // random slope SDs
   // sigma_nu_c: changed to gamma() to match Grabowska's sigma_theta(c) ~ Gamma(1,1)
   sigma_nu_c    ~ gamma(prior_sigma_nu_c[1],    prior_sigma_nu_c[2]);
-  // sigma_nu_r / sigma_nu_cr: no Grabowska equivalent (resp_type and the
-  // interaction are fixed on drift in their model), left as normal()
+  // sigma_nu_r / sigma_nu_cr: no Grabowska equivalent 
   sigma_nu_r    ~ normal(prior_sigma_nu_r[1],    prior_sigma_nu_r[2]);
   sigma_nu_cr   ~ normal(prior_sigma_nu_cr[1],   prior_sigma_nu_cr[2]);
   // sigma_alpha_r ~ normal(...);   
