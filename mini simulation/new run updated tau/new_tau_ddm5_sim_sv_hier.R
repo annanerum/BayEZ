@@ -17,7 +17,7 @@ sd_subj <- list(
   sigma_alpha_intercept = 0.08, sigma_tau_intercept = 0.05
 )
 
-global_min_rt <- 0.08   # fixed constant for every subject 
+global_min_rt <- 0.08   # fixed constant for every subject (before: 0.20)
 
 simulate_subject <- function(sp) {
   condition <- c(1, sample(rep(c(1, -1), each = n_kept_trials / 2)))
