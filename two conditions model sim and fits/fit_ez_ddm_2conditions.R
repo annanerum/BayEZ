@@ -2,7 +2,7 @@ library(cmdstanr)
 library(dplyr)
 library(posterior)
 
-PROJECT_DIR <- "/Users/annegiacobello/Desktop/EZ Paper "   # same as in the simulation script (note the trailing space)
+PROJECT_DIR <- "/Users/annegiacobello/Desktop/EZ Paper "  
 DATA_DIR    <- file.path(PROJECT_DIR, "data_sim_fullddm_2condtions")
 FIT_DIR     <- file.path(PROJECT_DIR, "fits_ez_2conditions")
 STAN_FILE   <- file.path(PROJECT_DIR, "ez_ddm_2conditions.stan")
