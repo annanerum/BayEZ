@@ -14,10 +14,10 @@ n_trials <- 200
 
 
 true_pop <- list(
-  beta_nu1    = 1.30,       # drift intercept, average drift when condition is 0
+  beta_nu1    = 1.60,       # drift intercept, average drift when condition is 0
   # condition +1: drift --> 1.30 + 0.5 = 1.80
   # condition -1: drift --> 1.30 − 0.5 = 0.80
-  nu_c        = 0.5,        # average condition effect on drift, shift between conditions
+  nu_c        = 0.4,        # average condition effect on drift, shift between conditions
   beta_alpha1 = log(1.5),   # 0.405 --> boundary sep intercept on the log scale
   # --> exp(beta_alpha1) = 1.5 = average boundary sep (always positive via exp)
   beta_tau    = 0.20,       # population mean non-decision time t0 (in seconds, natural scale)
