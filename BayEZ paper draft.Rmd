@@ -8,25 +8,23 @@ author:
     email         : "anne.giacobello@uni-potsdam.de"
     
   - name          : "Adriana F. Chávez De la Peña"
-    affiliation   : "4"
+    affiliation   : "2"
+  
+  - name          : "Nina Ehmann"
+    affiliation   : "3"
     
   - name          : "Julia M. Haaf"
     affiliation   : "1"
-  
-  - name          : "Joachim Vandekerckhove"
-    affiliation   : "2, 3"
     
 
 
 affiliation:
   - id            : "1"
-    institution   : "Department of Psychology, University of Potsdam, Germany"
+    institution   : "Department of Psychology, University of Potsdam, Potsdam, Germany"
   - id            : "2"
-    institution   : "Department of Cognitive Sciences, University of California, Irvine, CA, USA"
+    institution   : "Graduate School of Education, Stanford University, Stanford, CA, USA"
   - id            : "3"
-    institution   : "Department of Statistics, University of California, Irvine, CA, USA"
-  - id            : "4"
-    institution   : "Stanford University Graduate School of Education, Stanford School of Medicine, Stanford, CA, USA"
+    institution   : "Psychological Methods, University of Amsterdam, Amsterdam, the Netherlands"
     
   
 header-includes   :
@@ -67,13 +65,11 @@ r_refs("EZ_Paper.bib")
 
 # Introduction
 
-## short description ddm
+Cognitive models formalize how unobservable cognitive processes produce observable behavior. One popular cognitive model is the drift diffusion model [@ratcliff_theory_1978; @ratcliff1998modeling; @ratcliff2002estimating.], originally developed by @stone_models_1960 and @link_relative_1975-1. It describes how information is accumulated in a task with a two choice options. As soon as a decision-maker is asked to make a judgement about a presented stimulus, the accumulation process starts. The process stops once the decision-maker is convinced by one of the options. According to the principle of accumulation of information [@laming_information_1968] there are two choices to make: When one is ready to respond and what to respond, which are represented in the data by the response time (RT) and the choice, respectively.
 
-One popular cognitive process model is the drift diffusion model [@ratcliff_theory_1978; @farrell2017drift], originally developed by @stone_models_1960 and @link_relative_1975-1. The model has since become a measurement tool [@vandekerckhove_crossed_2010; @vandekerckhove_hierarchical_2011-1] and is used widely [see, e.g., @myers_practical_2022; @yang2023diffusion; @ratcliff2015modeling]. It describes an information accumulation process in a task with a binary choice. The assumption is that the accumulation process starts as soon as decision-makers are asked to make the binary judgement about presented stimuli and that it stops once a decision boundary is met. According to the principle of accumulation of information [@laming_information_1968] there are two choices to make: When one is ready to respond and what to respond, which are represented in the data by the reaction time (RT) and the choice, respectively.
+The full drift diffusion model (DDM) was introduced by @ratcliff2002estimating. This model represents the information accumulation procedure as an interplay between seven parameters. These parameters are illustrated in Figure \@ref(fig:ddm-pic). In this illustration, upwards movement represents movement towards the correct responds, and downward movement represents movement towards an error response. The drift rate parameter $\nu$ reflects how efficiently evidence for the correct response is accumulated over time. The more efficient, the larger the value. The boundary separation parameter $\alpha$ captures the amount of evidence a participant requires before committing to one of the two responses---that is, their level of response caution. The starting point parameter $\beta$ reflects where the evidence accumulation process starts relative to the two decision boundaries---values closer to 0 indicate a bias toward the error bound, whereas values closer to $\alpha$ indicate a bias toward the correct bound. When $\beta = \frac{\alpha}{2}$, the accumulation process starts at the midpoint between the two boundaries reflecting no a priori bias. The non-decision time parameter $\tau$ accounts for the time a participant needs to encode and process the presented stimulus, and the time it takes to execute the response. The remaining three parameters capture across-trial variability, accounting for the fact that even identical stimuli are not processed the same way on every trial. The variability in drift rate $\eta$ reflects trial-to-trial fluctuations in the rate of evidence accumulation. The variability in starting point $s_z$ captures trial-to-trial fluctuations in the initial bias of the accumulation process. Finally, the variability in non-decision time $s_t$ reflects trial-to-trial variability in the duration of encoding and motor processes.
 
-Four of the seven parameters of the DDM are illustrated in Figure \@ref(fig:ddm-pic). The drift rate parameter $\nu$ (nu) reflects how efficiently evidence is accumulated over time. The boundary separation parameter $\alpha$ (alpha) captures the amount of evidence a participant requires before committing to a response — that is, their level of response caution. The starting point parameter $\beta$ reflects where the evidence accumulation process begins relative to the two boundaries — values closer to 0 indicate a bias toward the error bound, whereas values closer to $\alpha$ indicate a bias toward the correct bound. When $\beta = \frac{\alpha}{2}$, the accumulation starts at the midpoint between the two boundaries, this reflects no a priori bias. Finally, the non-decision time parameter $\tau$ (tau) accounts for the time a participant needs to encode and process the stimuli that are presented and includes, for example, perceptual encoding and motor execution.^[The remaining three parameters capture across-trial variability. The variability in drift rate $\eta$ (eta) reflects trial-to-trial fluctuations in the rate of evidence accumulation, accounting for the fact that even identical stimuli are not processed with identical efficiency on every trial. The variability in starting point $s_z$ captures trial-to-trial fluctuations in the initial bias of the accumulation process. Finally, the variability in non-decision time $s_t$ reflects trial-to-trial variability in the duration of encoding and motor processes.]
-
-The DDM parameters capture aspects of decision making but these aspects can be manipulated by the design of an experiment. For example, the drift rate ($\nu$) is affected by individual differences in how fast and efficient one can process the presented information.
+<!-- The DDM parameters capture aspects of decision making but these aspects can be manipulated by the design of an experiment. For example, the drift rate ($\nu$) is affected by individual differences in how fast and efficient one can process the presented information. -->
 
 ```{r}
 
@@ -316,10 +312,13 @@ p <- ggplot() +
 p
 ```
 
+<!-- The model has since become a measurement tool [@vandekerckhove_crossed_2010; @vandekerckhove_hierarchical_2011-1] and is widely used [see, e.g., @myers_practical_2022; @yang2023diffusion; @ratcliff2015modeling]. -->
 
+The DDM is widely used, for example in decision-making [REFS], memory [REFS], cognitive control [REFS], and even in creativity research [REFS]. More recently, the DDM has also been applied as a measurement tool  [@vandekerckhove_crossed_2010; @vandekerckhove_hierarchical_2011-1], for example in the validation of clinical diagnoses [REFS]. Given the wide applicability of the DDM, its usability is crucial. That is, many researchers should be able to estimate DDM model parameters in an efficient way. This has always been the DDM's weak spot. For example, @Lueken2025... reported identifiable issues, @boehm2018estimating highlight the model's computational complexity and technical difficulties with model fitting, and @henrich2024seven note long computing time. As a result, there have been many efforts to make the model less computationally intensive, either through improved estimation techniques [e.g., @navarro2009fast; @stevenson2026bayesian], through reduced model complexity [@wagenmakers2007ez], or through efficient approximation techniques [@brown2006evaluating].
 
+In this paper, we assess the effects of reduced model complexity using different Bayesian hierarchical implementations of the DDM. For this assessment, we rely on the so-called *EZ diffusion model* [EZ-DDM; @wagenmakers2007ez]. Both the full DDM and the EZ-DDM were recently implemented as Bayesian models [@chavez2025ez; @henrich2024seven]. These advances allow us a fine-grained assessment of the reduction of the number of parameters from the seven parameters of the full DDM to three parameters of the EZ-DDM (drift rate, boundary separation, and non-decision time). Crucially, this can be done without any differences in the software implementation. In the following, we first present the EZ-DDM and discuss the advantages of hierarchical cognitive modeling. We then introduce the Bayesian hierarchical EZ-DDM developed by @chavez2025ez, its implementation in the probabilistic programming language Stan, and an application of this model to real data. Finally, we compare this new implementation with similar Bayesian hierarchical implementations of (1.) an extended EZ-DDM including the bias parameter, (2.) a five-parameter DDM including variability in drift rate, and (3.) the full seven-parameter DDM.
 
-## problem: computational intensity, solution: EZ
+## EZ Diffusion Model
 
 The drift diffusion model (DDM) gives an explanation for the mechanisms of a decision making process and is able to handle the speed–accuracy trade-off [@zhang_dissociable_2014]. 
 However, its implementation is computationally complex and fitting the model can be technically difficult [@boehm2018estimating].
@@ -334,7 +333,7 @@ However, the EZ DDM assumes no across-trial variability in parameters and is les
 Despite these limitations, the EZ remains a practical and computationally efficient tool for estimating decision-making parameters, which makes it a widely used starting point in applied research.
 
 
-## Problem: Individual differences, solution: hierarchical EZ 
+## Hierarchical Cognitive Modeling
 
 While the EZ provides a practical and accessible tool for parameter estimation, applying it independently to each participant ignores the structure that individual differences impose. A hierarchical framework addresses this limitation by modelling participants jointly, which enables inference at the individual and group level simultaneously.
 
@@ -348,11 +347,8 @@ The hierarchical extension of the EZ diffusion model has been implemented by @ch
 
 The goal of this paper is to ensure that researchers can use this model for their own research. For this purpose, we introduce its implementation in R-Stan and JAGS, show how to apply it and give a practical example.
 
-## Problem: how to apply, solution: code and examples
 
-In the following, we will formally introduce the (hierarchical) EZ DDM, show how it can be implemented and present an application.
-
-# Modelling the EZ diffusion model
+# Hierarchical EZ Diffusion Model
 
 Enabling the estimation of the cognitive parameters at the individual level, while also modelling population-level variability, @chavez2025ez have shown how to embed the EZ into a hierarchical framework. 
 
@@ -596,7 +592,7 @@ model {
 
 To illustrate how the hierarchical Bayesian EZ diffusion model can be applied in practice, we re-analysed the behavioural data of @grabowska2025individual, who studied post-response adaptation in a speeded flanker task. @grabowska2025individual fitted a hierarchical four-parameter Wiener diffusion model (ref??) to the single-trial data and were interested in how the response on the preceding trial (correct vs. error) and the amplitude of the error- and correct-related negativity (ERN/CRN) relate to drift rate and boundary separation on the following trial. We used the same data and tried to use a similar effect structure, as far as the EZ DDM allowed it. 
 
-## Data
+## Application Data
 
 The dataset consists of $I = 222$ participants who completed a speeded arrow flanker task with $70\%$ congruent and $30\%$ incongruent trials and a response window of $600$ ms [for details, see @grabowska2025individual]. The data are available on OSF (https://osf.io/jszyh/). We applied the trial selection of @grabowska2025individual, which follows @mattes2022: Only trials that were part of a correct–correct–X–P sequence were analysed, where X is the reference trial that provides the response type (correct or error) and P is the trial on which adaptation is observed. Trials with RTs above $1000$ ms and trials with a log-transformed RT outside the participant mean $\pm 3$ standard deviations were excluded.
 
@@ -614,7 +610,7 @@ Both factors were contrast-coded ($\pm 1$). Note that @grabowska2025individual c
 For each participant–cell combination, we computed the number of trials $J_{ik}$, the number of correct responses $C_{ik}$, and the mean ($MRT_{ik}$) and variance ($VRT_{ik}$) of the response times. <!-- Our script currently computes MRT and VRT over all trials in a cell (correct and error), instead of just the correct RTs only and uses C as the sample size. I feel like there was a reason why we did not just do correct trials (sub$rt[sub$acc_bin == 1])..? --> Because errors are rare in this task, the post-error cells contain far fewer trials than the post-correct cells. On average, participants contributed about $202$ post-correct and $25$ post-error trials [@grabowska2025individual], so the incongruent post-error cell typically contains fewer than ten trials. <!-- Do I need to report the exact cell counts? --> Cells with fewer than two trials do not allow a variance to be computed. For these cells, $MRT_{ik}$ and $VRT_{ik}$ were replaced by the mean across participants for that cell, and $J_{ik}$ was set to $2$. Second, $C_{ik}$ was restricted to the range $[1, J_{ik} - 1]$, so that every cell contains at least one correct and one incorrect response. <!-- DO I need to report how many cells were affected by that? -->
 
 
-## The Model
+## Model Adaptation
 
 Since @grabowska2025individual modelled the effects of interest on drift rate and boundary separation, and non-decision time was not expected to vary with the predictors, we specified the following structure.
 We tried to stay as close as possible to the analysis of @grabowska2025individual but also needed to specify a model that can be identified from summary statistics.
@@ -869,13 +865,13 @@ $$
 
 The model was fitted in Stan via `rstan` with four chains of $2000$ iterations each, of which the first $1000$ were discarded as warm-up. Convergence was assessed with $\hat{R}$ for all population-level parameters. If any $\hat{R}$ exceeded $1.05$, the model would have been refitted with six chains of $4000$ iterations, `adapt_delta` $= 0.99$, and a maximum tree depth of $13$. However, this was not necessary, as all population-level parameters reached $\hat{R} \leq 1.05$. The largest value was $1.049$, for the cell-level standard deviation of boundary separation $\sigma_\alpha$, which also had the lowest effective sample size ($106$). All other population-level parameters had effective sample sizes above $500$. There were ??? divergent transitions. The Stan model and the R script are available at https://github.com/annanerum/BayEZ.
 
-## Results 
+## Application Results 
 
 We compared the posterior estimates of the hierarchical EZ DDM with the estimates of the model used by @grabowska2025individual. However, some notes must be kept in mind. First, @grabowska2025individual coded the response type the other way round (error $= 1$, correct $= -1$). To make the estimates comparable, we flipped the sign of all their effects involving response type. Second, their effects are conditional on the single-trial ERN/CRN amplitudes and their interactions with response type. We included only behavioural measures and not these predictors, because the EZ DDM only receives summary statistics per cell. This means, our coefficients may have absorbed the variance that the EEG predictors explain in their model. This mainly affected the response-type effects and their interaction, because ERN amplitudes were related to response type. Lastly, @grabowska2025individual report the 95% highest density intervals, whereas we report the equal-tailed (??) 95% credible intervals. The full table of posterior estimates of our model (and theirs??) are listed in Table \@ref(tab:app-estimates) in the Supplement. Figure \@ref(fig:app-forest-effects) shows the population-level estimates of both models side by side.
 
 ```{r app-forest-effects, echo = FALSE, message = FALSE, warning = FALSE, fig.cap = "Population-level estimates of the hierarchical EZ DDM (filled points, posterior mean and 95\\% credible interval) and of the drift diffusion model used by Grabowska et al. (2025; open points, posterior mean and 95\\% highest density interval). Condition: congruent $= 1$, incongruent $= -1$. Response type of the preceding trial: correct $= 1$, error $= -1$", fig.width = 6.5, fig.height = 6, fig.pos = "H"}
 library(ggplot2)
-est <- read.csv(file.path("output_krakow_final", "krakow_estimates.csv"))
+est <- read.csv(file.path("working model vs full model", "output_krakow_final", "krakow_estimates.csv"))
 rownames(est) <- est$param
 
 grab_eff <- data.frame(
@@ -982,7 +978,7 @@ p_sds
 <!-- move this to the Supplement section??-->
 
 ```{r app-estimates, echo = FALSE, results = "asis"}
-est <- read.csv(file.path("output_krakow_final", "krakow_estimates.csv"))
+est <- read.csv(file.path("working model vs full model", "output_krakow_final", "krakow_estimates.csv"))
 
 labels <- c(
   mu_nu                 = "$\\gamma_{\\nu,0}$ (drift intercept)",
@@ -1025,15 +1021,27 @@ papaja::apa_table(
 
 
 
-# 3, 4, 5 or 7 parameters? Comparison to the DDM 
+# 3, 4, 5 or 7 Parameters? Comparison to the DDM 
 
-## Simulation Based Comparison
+Is it just EZ or also good? Previously shown that the EZ model is surprisingly accurate when recovering parameters from the full DDM. For non-decision time, it may even be a bit better than common estimation methods of the full DDM. 
 
-## Application of all models 
+Cite new Ratcliff chapter 
+
+In addition, there are new (hierarchical Bayesian) estimation methods for the full DDM that have not been tested excessively.
+
+Therefore, we aimed to systematically assess the estimation accuracy of different versions of the diffusion model: From the full seven-parameter version, over a reduced five-parameter version, to the two EZ DDM implementations with four and three parameters, respectively. In the following, we provide an overview over the models, then go over the simulation setup we employed, and finally provide the results.
+
+## Models
+
+## Simulation Setup
+
+## Simulation Results
 
 
 \newpage
 # Discussion
+
+Is it the EZ parameterization or the restructuring of the data?
 
 \newpage
 ## Maybe use for discussion
