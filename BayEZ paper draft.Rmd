@@ -1,0 +1,1212 @@
+---
+title             : "Pick Your Favourite Number (of Parameters)"
+
+author: 
+  - name          : "Anne Giacobello"
+    affiliation   : "1"
+    address       : "Karl-Liebknecht-Str. 24-25 14476 Potsdam"
+    email         : "anne.giacobello@uni-potsdam.de"
+    
+  - name          : "Adriana F. Chávez De la Peña"
+    affiliation   : "4"
+    
+  - name          : "Julia M. Haaf"
+    affiliation   : "1"
+  
+  - name          : "Joachim Vandekerckhove"
+    affiliation   : "2, 3"
+    
+
+
+affiliation:
+  - id            : "1"
+    institution   : "Department of Psychology, University of Potsdam, Germany"
+  - id            : "2"
+    institution   : "Department of Cognitive Sciences, University of California, Irvine, CA, USA"
+  - id            : "3"
+    institution   : "Department of Statistics, University of California, Irvine, CA, USA"
+  - id            : "4"
+    institution   : "Stanford University Graduate School of Education, Stanford School of Medicine, Stanford, CA, USA"
+    
+  
+header-includes   :
+   - \usepackage{bm}
+   - \usepackage{float}
+   - \usepackage{amsmath}
+   - \usepackage{setspace}
+   - \usepackage{marginnote}
+   - \setstretch{1.5}
+     
+wordcount         : "added later"
+
+bibliography      : "EZ_Paper.bib"
+
+floatsintext      : no
+figurelist        : no
+tablelist         : no
+footnotelist      : no
+
+linenumbers       : yes
+
+mask              : no
+draft             : no
+
+documentclass     : "apa6"
+classoption       : "doc"
+output:
+  papaja::apa6_pdf:
+    latex_engine: xelatex
+extra_dependencies: ["float"]
+---
+
+
+```{r setup, include = FALSE}
+library("papaja")
+r_refs("EZ_Paper.bib")
+```
+
+# Introduction
+
+## short description ddm
+
+One popular cognitive process model is the drift diffusion model [@ratcliff_theory_1978; @farrell2017drift], originally developed by @stone_models_1960 and @link_relative_1975-1. The model has since become a measurement tool [@vandekerckhove_crossed_2010; @vandekerckhove_hierarchical_2011-1] and is used widely [see, e.g., @myers_practical_2022; @yang2023diffusion; @ratcliff2015modeling]. It describes an information accumulation process in a task with a binary choice. The assumption is that the accumulation process starts as soon as decision-makers are asked to make the binary judgement about presented stimuli and that it stops once a decision boundary is met. According to the principle of accumulation of information [@laming_information_1968] there are two choices to make: When one is ready to respond and what to respond, which are represented in the data by the reaction time (RT) and the choice, respectively.
+
+Four of the seven parameters of the DDM are illustrated in Figure \@ref(fig:ddm-pic). The drift rate parameter $\nu$ (nu) reflects how efficiently evidence is accumulated over time. The boundary separation parameter $\alpha$ (alpha) captures the amount of evidence a participant requires before committing to a response — that is, their level of response caution. The starting point parameter $\beta$ reflects where the evidence accumulation process begins relative to the two boundaries — values closer to 0 indicate a bias toward the error bound, whereas values closer to $\alpha$ indicate a bias toward the correct bound. When $\beta = \frac{\alpha}{2}$, the accumulation starts at the midpoint between the two boundaries, this reflects no a priori bias. Finally, the non-decision time parameter $\tau$ (tau) accounts for the time a participant needs to encode and process the stimuli that are presented and includes, for example, perceptual encoding and motor execution.^[The remaining three parameters capture across-trial variability. The variability in drift rate $\eta$ (eta) reflects trial-to-trial fluctuations in the rate of evidence accumulation, accounting for the fact that even identical stimuli are not processed with identical efficiency on every trial. The variability in starting point $s_z$ captures trial-to-trial fluctuations in the initial bias of the accumulation process. Finally, the variability in non-decision time $s_t$ reflects trial-to-trial variability in the duration of encoding and motor processes.]
+
+The DDM parameters capture aspects of decision making but these aspects can be manipulated by the design of an experiment. For example, the drift rate ($\nu$) is affected by individual differences in how fast and efficient one can process the presented information.
+
+```{r}
+
+library(ggplot2)
+library(grid)
+
+
+col_ez    <- "#D62728"   # red EZ-DDM
+col_five  <- "#1565C0"   # blue 2 added for the 5-param model
+col_seven <- "#7B3F9E"   # violet for full 7-param model: s_beta, s_tau
+
+alpha <- 1
+tau   <- 0.25
+
+t_knots <- c(0, 0.35, 0.42, 0.75, 1.15, 1.55, 1.75, 2.40, 2.85, 3.30, 3.75, 4.20)
+y_knots <- c(tau,  0.12, 0.25, 0.32, 0.18, 0.55, 0.35, 0.62, 0.58, 0.88, 0.70, alpha)
+
+
+y_knots_scaled <- tau + (y_knots - tau) * 0.62
+y_knots_scaled[length(y_knots_scaled)] <- alpha
+
+path_interp <- spline(t_knots, y_knots_scaled, n = 50, method = "natural")
+time_path   <- path_interp$x
+
+set.seed(7)
+n <- length(time_path)
+
+
+slow_walk    <- cumsum(rnorm(n, 0, 0.040)) * 0.20
+medium_bumps <- cumsum(rnorm(n, 0, 0.07))  * 0.14
+spikes       <- rnorm(n, 0, 0.09)
+
+spike_locs <- sample(seq(5, n - 5), size = 6)
+spike_dir  <- sample(c(-1, 1), size = 6, replace = TRUE)
+spikes[spike_locs] <- spikes[spike_locs] + spike_dir * runif(6, 0.14, 0.22)
+
+jitter <- slow_walk + medium_bumps + spikes
+jitter <- jitter - mean(jitter)
+
+ev_path <- path_interp$y + jitter
+
+
+ev_path <- ev_path - ev_path[1] + tau
+
+
+hard_cap <- alpha * 0.72
+ev_path[1:(n-1)] <- pmin(ev_path[1:(n-1)], hard_cap)
+
+
+min_val <- 0.04
+too_low <- ev_path < min_val
+ev_path[too_low] <- min_val + abs(ev_path[too_low] - min_val) * 0.3
+
+
+blend_start <- round(n * 0.88)
+for (i in blend_start:n) {
+  w <- ((i - blend_start) / (n - blend_start))^2
+  ev_path[i] <- (1 - w) * ev_path[i] + w * alpha
+}
+
+
+ev_path[1] <- tau
+ev_path[n] <- alpha
+
+rt <- max(time_path)
+df_path <- data.frame(time = time_path, evidence = ev_path)
+
+tau_x1 <- -0.38
+tau_x2 <-  0.00
+beta_x <- -0.07
+
+left_margin <- -0.95   
+
+x_max <- 5.8
+x_min <- left_margin
+x     <- seq(x_min, x_max, length.out = 1500)
+
+x_shift    <- pmax(x - 0.0, 0)
+top_raw    <- dgamma(x_shift, shape = 5.0, scale = 0.42)
+bottom_raw <- dgamma(x_shift, shape = 5.0, scale = 0.42)
+
+top_raw    <- top_raw    / max(top_raw)
+bottom_raw <- bottom_raw / max(bottom_raw)
+
+top_raw[x    < 0] <- 0
+bottom_raw[x < 0] <- 0
+
+taper <- ifelse(x < rt - 0.3, 1, exp(-((x - (rt - 0.3))^2) / (2 * 0.15^2)))
+taper[x >= rt] <- 0
+
+top_raw    <- top_raw    * taper
+bottom_raw <- bottom_raw * taper
+
+top_raw[top_raw       < 0.002] <- 0
+bottom_raw[bottom_raw < 0.002] <- 0
+
+top_y    <-  alpha + top_raw    * 0.44
+bottom_y <- -bottom_raw         * 0.22
+
+df_dens <- data.frame(x = x, top_y = top_y, bottom_y = bottom_y)
+
+
+arr_x1 <- 1.6;  arr_y1 <- 0.08
+arr_x2 <- 2.3;  arr_y2 <- 0.32
+offset <- 0.10
+
+
+sv_fan <- data.frame(
+  x    = c(arr_x1, arr_x1),
+  xend = c(arr_x1 + 0.65, arr_x1 + 0.65),
+  y    = c(arr_y1, arr_y1),
+  yend = c(arr_y1 + 0.62, arr_y1 + 0.12)
+)
+
+
+sw_x     <- -0.72          
+sw_half  <- 0.095          
+
+
+st0_y     <- -0.16
+st0_x1    <- tau_x1
+st0_x2    <- 0.02
+st0_xmid  <- (st0_x1 + st0_x2) / 2
+
+p <- ggplot() +
+  
+  geom_ribbon(data = df_dens,
+              aes(x = x, ymin = alpha, ymax = top_y),
+              fill = "darkgreen", colour = "black", linewidth = 0.4) +
+  
+  geom_ribbon(data = df_dens,
+              aes(x = x, ymin = bottom_y, ymax = 0),
+              fill = "#E75480", colour = "black", linewidth = 0.4) +
+  
+  geom_segment(aes(x = left_margin, xend = x_max, y = alpha, yend = alpha),
+               colour = "grey30", linewidth = 1.2) +
+  geom_segment(aes(x = left_margin, xend = x_max, y = 0, yend = 0),
+               colour = "grey30", linewidth = 1.2) +
+  geom_segment(aes(x = 0, xend = 0, y = -0.05, yend = alpha + 0.05),
+               colour = "grey30", linewidth = 1.2) +
+  
+  # tau 
+  geom_segment(aes(x = tau_x1, xend = tau_x2, y = tau, yend = tau),
+               colour = col_ez, linewidth = 1.3) +
+  geom_segment(aes(x = tau_x1, xend = tau_x1, y = tau - 0.04, yend = tau + 0.04),
+               colour = col_ez, linewidth = 1.0) +
+  
+  # s_tau 
+  geom_segment(aes(x = st0_x1, xend = st0_x2, y = st0_y, yend = st0_y),
+               colour = col_seven, linewidth = 2.2, alpha = 0.35, lineend = "round") +
+  geom_segment(aes(x = st0_x1, xend = st0_x1, y = st0_y - 0.035, yend = st0_y + 0.035),
+               colour = col_seven, linewidth = 1.0) +
+  geom_segment(aes(x = st0_x2, xend = st0_x2, y = st0_y - 0.035, yend = st0_y + 0.035),
+               colour = col_seven, linewidth = 1.0) +
+  
+  # beta 
+  geom_segment(aes(x = beta_x, xend = beta_x, y = 0.01, yend = tau - 0.01),
+               colour = col_five, linewidth = 1.3,
+               arrow = arrow(ends = "both", length = unit(0.10, "inches"),
+                             type = "closed")) +
+  
+  # s_beta 
+  geom_segment(aes(x = sw_x, xend = sw_x, y = tau - sw_half, yend = tau + sw_half),
+               colour = col_seven, linewidth = 2.2, alpha = 0.35, lineend = "round") +
+  geom_segment(aes(x = sw_x - 0.08, xend = sw_x + 0.08, y = tau - sw_half, yend = tau - sw_half),
+               colour = col_seven, linewidth = 1.0) +
+  geom_segment(aes(x = sw_x - 0.08, xend = sw_x + 0.08, y = tau + sw_half, yend = tau + sw_half),
+               colour = col_seven, linewidth = 1.0) +
+  
+  geom_line(data = df_path, aes(x = time, y = evidence),
+            colour = "black", linewidth = 1.2) +
+  
+  geom_segment(aes(x = rt, xend = rt, y = alpha, yend = alpha + 0.06),
+               colour = col_ez, linewidth = 1.2) +
+  
+  # nu 
+  geom_segment(aes(x = arr_x1, xend = arr_x2, y = arr_y1, yend = arr_y2),
+               colour = col_ez, linewidth = 1.4,
+               arrow = arrow(length = unit(0.12, "inches"), type = "closed")) +
+  
+  # s_nu 
+  geom_segment(data = sv_fan, aes(x = x, xend = xend, y = y, yend = yend),
+               colour = col_five, linewidth = 1.2, alpha = 0.85,
+               arrow = arrow(length = unit(0.10, "inches"), type = "closed")) +
+  
+  annotate("text", x = tau_x1 + 0.15, y = alpha + 0.07,
+           label = expression(alpha), colour = col_ez,
+           size = 7, hjust = -0.2, vjust = 0.9) +
+  
+  annotate("text", x = (tau_x1 + tau_x2) / 2, y = tau + 0.05,
+           label = expression(tau), colour = col_ez,
+           size = 6, hjust = 0.5) +
+  
+  annotate("text", x = arr_x1 + 0.90, y = arr_y1 + 0.2 ,
+           label = expression(nu), colour = col_ez, size = 6, hjust = 1, vjust = 1) +
+  
+  annotate("text", x = beta_x - 0.11, y = tau / 2,
+           label = expression(beta), colour = col_five,
+           size = 6, hjust = 1, vjust = 0.5) +
+  
+  annotate("text", x = arr_x1 + 0.65, y = arr_y1 + 0.72,
+           label = expression(s[nu]), colour = col_five, size = 6, hjust = 0.5, fontface = "bold") +
+  
+  annotate("text", x = sw_x - 0.10, y = tau,
+           label = expression(s[beta]), colour = col_seven,
+           size = 6, hjust = 1, vjust = 0.5) +
+  
+  annotate("text", x = st0_xmid, y = st0_y - 0.10,
+           label = expression(s[tau]), colour = col_seven,
+           size = 6, hjust = 0.5) +
+  
+  annotate("text", x = rt + 0.12, y = alpha + 0.11,
+           label = "observed RT", colour = col_ez,
+           size = 4.5, hjust = 0.0) +
+  
+  annotate("text", x = x_max - 0.1, y = alpha - offset,
+           label = "correct bound", colour = "grey30",
+           size = 4.5, hjust = 1) +
+  
+  annotate("text", x = x_max - 0.1, y = 0 + offset,
+           label = "error bound", colour = "grey30",
+           size = 4.5, hjust = 1) +
+  
+  annotate("text", x = left_margin + 0.10, y = 0.62,
+           label = "evidence", colour = "grey30",
+           angle = 90, size = 5.5) +
+  
+  annotate("text", x = -0.02, y = 0.00,
+           label = "0", size = 5.5, hjust = 1.2, vjust = 1.2) +
+  
+  coord_cartesian(
+    xlim = c(left_margin, x_max),
+    ylim = c(-0.42, 1.36),
+    clip = "off"
+  ) +
+  
+  theme_void() +
+  theme(plot.background = element_rect(fill = "white", colour = NA))
+
+p
+```
+
+
+
+
+## problem: computational intensity, solution: EZ
+
+The drift diffusion model (DDM) gives an explanation for the mechanisms of a decision making process and is able to handle the speed–accuracy trade-off [@zhang_dissociable_2014]. 
+However, its implementation is computationally complex and fitting the model can be technically difficult [@boehm2018estimating].
+
+In response, @wagenmakers2007ez developed a fast, but stable and easy version of the DDM, the "EZ diffusion model" (EZ DDM), which estimates three key parameters from the DDM (non-decision time, drift rate, and boundary separation), assuming no a priori bias toward either response option (i.e., $\beta = \frac{\alpha}{2}$), from **three summary statistics**: The mean ($MRT$) and variance ($VRT$) of the correct RTs and the accuracy ($Percentage$ $correct$ $(Pc)$). The three observed summary statistics are converted into the parameters using **closed-form equations**. Hence, the model is not fit directly on the trial-level data.
+
+The EZ works with low trial counts and low error rates: It performs relatively well in situations with limited data. Traditional diffusion model fitting requires a sufficient number of both correct and error trials to reliably estimate parameters, especially the shape of RT distributions. However, in many experimental paradigms — particularly those with high accuracy — error trials are scarce [@wagenmakers2007ez, @vanravenzwaaij2017ez]. The EZ-DDM solves this limitation by relying only on the three summary statistics (mean RT, RT variance, and accuracy), making it suitable for small sample designs and high-accuracy tasks (e.g., easy perceptual decision tasks). The parameter estimates of the EZ remain reasonably stable even when error rates are very low, where full diffusion model fits can become unreliable or fail to converge.
+
+The EZ also requires no error RT distribution. DDM fitting procedures depend on the full distribution of response times for both correct and incorrect responses. This is often problematic because error RTs are often noisy, error trials are often too few to estimate distributions reliably, and preprocessing can disproportionately affect error trials. By not modelling RT distributions directly, the EZ DDM eliminates this dependency. It derives parameter estimates from aggregated measures, reducing sensitivity to outliers in the RT data and instability caused by too few error observations. It is also accessible to a broader audience: The EZ DDM lowers the barrier to entry for researchers that are unfamiliar with diffusion modelling, and is very fast compared to the full DDM. It therefore has been has been widely adopted [@wagenmakers2007ez, @chavez2025ez].
+
+However, the EZ DDM assumes no across-trial variability in parameters and is less flexible than the full DDM [@ratcliff2008ez], and when the model's assumptions are violated (variability in drift rate, starting point, or non-decision time), recovered parameter values tend to underestimate their true values. Additionally, the EZ cannot accommodate trial-to-trial variability in drift rates, starting points, or non-decision times, which are features the full diffusion model handles [@ratcliff2008diffusion]. 
+Despite these limitations, the EZ remains a practical and computationally efficient tool for estimating decision-making parameters, which makes it a widely used starting point in applied research.
+
+
+## Problem: Individual differences, solution: hierarchical EZ 
+
+While the EZ provides a practical and accessible tool for parameter estimation, applying it independently to each participant ignores the structure that individual differences impose. A hierarchical framework addresses this limitation by modelling participants jointly, which enables inference at the individual and group level simultaneously.
+
+Hierarchical Bayesian models extend standard cognitive models by adding a second level that explains how the underlying psychological parameters are generated and vary across individuals [@lee_how_2011-4; @vandekerckhove_hierarchical_2011-2]. Rather than treating parameters as fixed quantities estimated separately per participant, they are modelled as samples drawn from a population-level distribution, enabling simultaneous inference about individual- and group-level properties [@lee_how_2011-4]. This is particularly useful when data per participant are sparse, which often leads to non-hierarchical models failing to produce reliable estimates. Hierarchical models pool information across individuals and recover parameter estimates that would otherwise be not recoverable [@vandekerckhove_hierarchical_2011-2].
+
+Because the parameters retain their psychological meaning, inference remains grounded in cognitive processes while simultaneously capturing how those processes vary between people. This has been described as a form of "cognitive psychometrics": a unified framework that explains both the mechanisms underlying behaviour and the individual differences in those mechanisms [@vandekerckhove_hierarchical_2011-2]. Variability is not treated as noise, but as a theoretically meaningful quantity that needs to be modelled and explained. For instance, drift rate can be expressed as a function of predictors such as age, stimulus properties, or experimental condition, allowing the model to explain and not only describe the differences between participants [@vandekerckhove_hierarchical_2011-2].
+
+A hierarchical structure also supports parameters to be vary selectively, e.g., some fixed across participants, others free, which avoids overly complex models with too many free parameters [@vandekerckhove_hierarchical_2011-2].Furthermore, hierarchical models allow different cognitive processes to contribute to the same dataset, which means the core model can remain simple while one can still account for additional variability through separate processes, leading to more accurate and theoretically meaningful explanations [@lee_how_2011-4]. 
+
+The hierarchical extension of the EZ diffusion model has been implemented by @chavez2025ez and offers a principled and psychologically interpretable way to handle individual differences, producing more stable estimates and deeper theoretical conclusions than fitting the model independently to each participant [@chavez2025ez; @lee_how_2011-4; @vandekerckhove_hierarchical_2011-2]. 
+
+The goal of this paper is to ensure that researchers can use this model for their own research. For this purpose, we introduce its implementation in R-Stan and JAGS, show how to apply it and give a practical example.
+
+## Problem: how to apply, solution: code and examples
+
+In the following, we will formally introduce the (hierarchical) EZ DDM, show how it can be implemented and present an application.
+
+# Modelling the EZ diffusion model
+
+Enabling the estimation of the cognitive parameters at the individual level, while also modelling population-level variability, @chavez2025ez have shown how to embed the EZ into a hierarchical framework. 
+
+Following @chavez2025ez, $\mathbf{Y}_{ij}$ denotes the vector of the choice and response time of the $i$th person on the $j$th trial. $\mathbf{Y}_{ij}$ is modeled using a Wiener distribution,
+
+$$\mathbf{Y}_{ij} \sim \mbox{Wiener} \ (\alpha_i,\ \beta_i,\ \tau_i,\ \nu_i)$$
+
+where the parameters are a (participant-specific) drift rate $\nu_i$, a boundary separation $\alpha_i$, and a non-decision time $\tau_i$. The fourth parameter of the Wiener distribution, the bias parameter $\beta_i$, is fixed at $\frac{\alpha_i}{2}$, (i.e., no response bias; see @wagenmakers2007ez).
+
+
+The mean parameter of the RTs of correct responses $M_{ci}$ and the variance parameter of the RTs of correct responses $\Sigma_{ci}$ can be *computed from the three key DDM parameters* $\nu_{i}$, $\alpha_{i}$, $\tau_{i}$.
+
+Let $u_i = \exp(-\alpha_i \nu_i)$. Then, the mean and variance of the correct response times are:
+$$
+M_{ci} = \tau_i + \big( \frac{\alpha_i}{2\nu_i} \big) \big( \frac{u_i - 1}{u_i + 1} \big) 
+$$
+
+and 
+
+$$
+\Sigma_{ci} = \big( \frac{\alpha_i}{2{\nu_i}^3} \big) \Bigg( \frac{1 - 2 \alpha_i \nu_i u_i - {u_i}^2}{(u_i + 1)^2} \Bigg).
+$$
+
+
+The summary statistics (mean ($MRT$) and variance ($VRT$) of the correct RTs, and the accuracy ($Percentage$ $correct$ $(Pc)$)) are converted into the parameters using *closed-form equations*.
+These observed summary statistics that serve as the "data" consist of each person $i$'s number of correct trials ($C_i$), as well as the mean and variance of the correct RTs ($MRT_i$ and $VRT_i$). 
+
+For $J$ observations, the sampling distribution of the number of correct trials $C_i$ is:
+$$
+C_i \sim \text{Binomial} \ \big(\pi_{ci},\ J \big)
+$$
+Here, the probability of a correct response is 
+$$\pi_{ci} = \frac{1}{\exp(-\alpha_i \nu_i) + 1}$$. 
+
+Similarly, for $J$ observations, the sampling distribution of the mean correct RT, $MRT_i$, is approximated by a normal distribution:
+$$
+MRT_i \sim \text{Normal} \ \Bigg(M_{ci},\ \frac{\Sigma_{ci}}{C_i} \Bigg)
+$$
+
+When $C_i$ is sufficiently large ($>30$), the sampling distribution of the variance of the correct RTs, $VRT_i$, is also approximated by a normal distribution:
+$$
+VRT_i \sim \text{Normal} \ \Bigg( \Sigma_{ci},\ 2 \frac{{\Sigma_{ci}} ^2}{C_i-1} \Bigg)
+$$
+The EZ DDM fixes the starting point at the midpoint between the two boundaries, $\beta_i = \frac{\alpha_i}{2}$ [@wagenmakers2007ez]. However, an a priori bias is common in practice (ref??). Participants may favour one response, if, for example, one of the two stimuli appears more often, or when one response is rewarded more strongly. If such a bias is present but not estimated by the model, its effect is absorbed by the remaining parameters and can distort estimates of those parameters.
+
+When we model $\beta_i$ as a free parameter, the probability of a correct response and the response time depend on where the process starts. With the diffusion coefficient fixed at $s = 1$, the probability of a correct response is
+$$
+\pi_{ci} = \frac{1 - \exp(-2\nu_i\beta_i)}{1 - \exp(-2\nu_i\alpha_i)},
+$$
+the formulas for the mean and variance of the RTs of correct responses can be found in the supplement. 
+
+
+Because a process that terminates at the lower boundary is equivalent to one that starts at $\alpha_i - \beta_i$ and terminates at the upper boundary, the equations for $M_{i}$ and $\Sigma_{i}$ replace $\beta_i$ by $\alpha_i - \beta_i$. A starting point closer to the correct boundary makes correct responses faster than incorrect responses, and a starting point closer to the error boundary makes incorrect responses faster than correct responses. Estimating $\beta_i$ therefore requires the RTs of incorrect trials for the estimation, such as the mean error RT,
+$$
+MRT_i \sim \text{Normal}\Bigg(M_{i},\ \frac{\Sigma_{i}}{J - C_i}\Bigg),
+$$
+and, if enough incorrect trials are available, the error RT variance ($VRT_i$; see EZ2 extension [@grasman2009mean].
+
+Adding those RTs reintroduces part of the problem that motivated the EZ model, namely the dependence on error trials, which are scarce in high-accuracy tasks. However, the hierarchical framework helps here: Participants with few errors are influenced more by the population distribution of $\beta$, so their bias estimates are shrunk toward the group mean instead of being unidentified. This is called regression to the mean (ref???). 
+
+
+# Implementation 
+
+
+The hierarchical EZ model described above captures individual differences in cognitive parameters through population-level distributions, but does not yet account for systematic variation due to experimental conditions or participant-level covariates. We extended the model to incorporate both sources of variation by using design matrices. 
+
+The idea is to model the parameter of each individual-level distribution as a linear combination of predictors. By this we can include experimental conditions, continuous participant-level covariates, or both in the model in a flexible way. Also, different parameters can be associated with different sets of predictors, reflecting theoretical assumptions about which factors are expected to drive which cognitive processes.
+
+Suppose we have a design with $K = 2$, indexed by $k = 1, \ldots, K$ experimental conditions — for example, an easy and a hard condition — and a single continuous participant-level covariate $x_i$. The drift rate $\nu$ is modelled as a function of both the experimental condition and the participant-level covariate ($x_i$), reflecting the expectation that processing efficiency varies both across conditions and across individuals. Non-decision time $\tau$ is modelled as a function of the experimental condition only, as sensori-motor processing speed is not expected to systematically covary with $x_i$.
+
+Boundary separation $\alpha$ is also modelled as a function of the experimental condition, but the size of the condition effect is allowed to vary across participants through a by-participant random slope $v_i$, where $v_i \sim \mathcal{N}(0,\ \sigma_v^2)$. This captures individual differences in how much participants adjust their response caution between the easy and the hard condition. Some participants may substantially raise their threshold in the harder condition, whereas others barely change their caution. The average condition effect on boundary separation is $\gamma^{(\alpha)}$, and $v_i$ reflects each participant's deviation from that average.
+
+The parameters of the three truncated normal distributions are each modelled as a linear combination of predictors via a parameter-specific design matrix $\mathbf{X}_{ik}^{(\theta)}$ and a parameter-specific vector of regression coefficients $\boldsymbol{\gamma}_{\theta}$, where $\theta \in \{\nu, \alpha, \tau\}$.
+
+This means, for the drift rate we describe 
+$$\nu_{ik} \sim \mathcal{N}_{(-3,\,3)}\!\big(\mathbf{X}_{ik}^{(\nu)}, \boldsymbol{\gamma}_{\nu},\ \sigma_\nu^2\big)$$
+The matrices then look like this:
+$$
+\mathbf{X}_{ik}^{(\theta)} = 
+\begin{vmatrix}
+1 & x_{11} & x_{112}\\
+1 & . & . \\
+1 & . & . \\
+1 & . & . \\
+1 &  x_{I1} & x_{IK2}
+\end{vmatrix}$$
+
+and
+
+$$
+\boldsymbol{\gamma}_{\nu} =
+\begin{vmatrix}
+\mu^{(\nu)} \\
+\gamma^{(\nu)}_1 \\
+\gamma^{(\nu)}_2
+\end{vmatrix}
+$$
+The matrix of $\mathbf{X}_{ik}^{(\theta)}$ consists of a first column that refers to the intercept (all 1s), a second column that refers to the continuous predictor (participant-level covariate), called $x_{i1}$ for every participant $i, ..., I$, and a third column that refers to the categorical predictor (in this case: experimental conditions), called $x_{ik2}$ for every participant $i, ..., I$ and condition $k$ (in this case this can be $1$ or $2$). 
+
+The vector $\boldsymbol{\gamma}_{\nu}$ consists of the mean of the parameter ($\mu^{(\nu)}$), $\gamma^{(\nu)}_2$ (the average shift in drift rate from condition 1 to condition 2), multiplied with the condition dummy variable $x_{ik2}$ (here it is $0$ when $k=1$ and $1$ when $k=2$), and $\gamma^{(\nu)}_1$ (the covariate effect on drift rate), multiplied with the continuous participant-level covariate $x_{i1}$
+
+
+To simplify, consider the drift rate for one participant $i$. The drift rate can be expressed as a univariate regression formula:
+$$\mu_{ik}^{(\nu)} = \mu^{(\nu)} + x_{i1}\gamma_1^{(\nu)} + x_{ik2}\gamma_2^{(\nu)}$$
+
+where $\mu^{(\nu)}$ is the population mean drift rate in condition 1, with $\gamma_1^{(\nu)}$ being the effect of the participant-level covariate $x_{i1}$ (continuous predictor). $\gamma_2^{(\nu)}$ is the average shift in drift rate from condition 1 to condition 2. The term $x_{ik2}$ serves as a dummy variable, that takes the value of 0 when $k=1$ (condition 1) and 1 when $k=2$ (condition 2) and is therefore a categorical predictor (experimental conditions). 
+
+Similarly, the boundary separation parameter and the non-decision time parameter are described as
+$$\alpha_{ik} \sim \mathcal{N}_{(0.1,\,3.0)}\!\big(\mathbf{X}_{ik}^{(\alpha)}\,\boldsymbol{\gamma}_{\alpha},\ \sigma_\alpha^2\big)$$
+and
+$$\tau_{ik} \sim \mathcal{N}_{(0.05,\,\infty)}\!\big(\mathbf{X}_{ik}^{(\tau)}\,\boldsymbol{\gamma}_{\tau},\ \sigma_\tau^2\big)$$
+The variance parameters $\sigma_\nu^2$, $\sigma_\alpha^2$, and $\sigma_\tau^2$ capture residual between-person variability after accounting for the predictors.
+
+The univariate regression formula for boundary separation is
+$$\mu_{ik}^{(\alpha)} = \mu^{(\alpha)} + x_{ik2}\!\left(\gamma^{(\alpha)} + v_i\right)$$
+where $v_i$ is defined as 
+$$v_i \sim \mathcal{N}(0,\ \sigma_v^2)$$
+This is a by-participant random slope on the condition dummy $x_{ik2}$. The average condition effect on boundary separation is $\beta^{(\alpha)}$, and $v_i$ captures each participant's deviation from that average, reflecting individual differences in how much response caution changes between the easy and the hard condition.
+
+
+Finally, the univariate regression for non-decision time is
+$$\mu_{ik}^{(\tau)} = \mu^{(\tau)} + x_{ik2}\gamma^{(\tau)}$$
+Here, the participant-level covariate and the random slope are omitted.
+
+
+
+## Implementation in Stan
+
+We implemented a version of the hierarchical EZ diffusion model by @chavez2025ez, extended it to designs with several within-subject conditions, and relaxed some of the parameter constraints. In many experimental paradigms, participants perform the same task under multiple experimental conditions (e.g., control vs. manipulation), and it may therefore be interesting how drift rate, boundary separation, and non-decision time change across conditions. We therefore describe a version of the model with $K$ conditions, indexed by $k = 1, \ldots, K$, in which each participant $i$ has a separate set of latent parameters ($\alpha_{ik}$, $\nu_{ik}$, and $\tau_{ik}$) for each condition $k$.
+
+We first included a `data` block, declaring the data to be used as inputs to the model. This input includes the number of persons `I`, the number of conditions `K`, the number of trials per person and condition `J`, the observed number of correct trials `C`, the observed mean response time for correct responses `MRT`, and the variance of the response times for correct responses `VRT`. Each of these is an $I \times K$ array with one entry per participant–condition cell. In addition, the `data` block contains one design matrix per parameter (`X_nu`, `X_alpha`, and `X_tau`), with one row vector per participant–condition cell, as well as the number of columns of each design matrix (`P_nu`, `P_alpha`, and `P_tau`). In our example, `X_nu` has three columns: intercept, covariate, and condition dummy. `X_alpha` and `X_tau` each have an intercept and a condition dummy, so they have two columns each. The by-participant random slope (see below) multiplies the condition dummy of `X_alpha`, so we also need to pass the index of that column, `cond_col_alpha`, as data (here: $2$). This way, the position of the condition dummy is not hard-coded in the model and can change with the design matrix.
+
+The participant-level covariate $x_i$ is not passed to Stan as a separate variable but is embedded into the second column of `X_nu` when the design matrix is constructed in R before fitting. This means Stan receives the pre-computed design matrices and the Stan model does not include the structure of the predictors. Because of this, the model does not assume a specific predictor structure and the matrices can be constructed in R depending on the design of the experiment, which makes the model reusable for different experimental designs.
+
+```{stan output.var="model_cond", cache = T, echo = TRUE}
+data {
+  int<lower=1> I;
+  int<lower=1> K;
+  int<lower=1> P_nu;      // columns in X_nu (here: intercept, covariate, condition)
+  int<lower=1> P_alpha;   // columns in X_alpha (here: intercept, condition)
+  int<lower=1> P_tau;     // columns in X_tau (here: intercept, condition)
+  int<lower=1, upper=P_alpha> cond_col_alpha;  // holding the condition dummy
+  array[I, K] int<lower=1> J;
+  array[I, K] int<lower=0> C;
+  matrix[I, K] MRT;
+  matrix[I, K] VRT;
+  array[I, K] row_vector[P_nu]    X_nu;
+  array[I, K] row_vector[P_alpha] X_alpha;
+  array[I, K] row_vector[P_tau]   X_tau;
+}
+```
+
+In R, `cond_col_alpha` can be determined directly from the column names of the design matrix for boundary separation, so that it always points to the condition dummy, regardless of how the matrix is set up:
+
+```{r cond-col, echo = TRUE, eval = FALSE}
+X_alpha_mat <- model.matrix(~ cond, data = d)   # columns: "(Intercept)", "cond"
+stan_data$cond_col_alpha <- which(colnames(X_alpha_mat) == "cond")
+```
+
+__"The R scripts to run the models can be found on Github... etc?"__
+
+In the `parameters` block, the group-level means are expressed as regression coefficients. Each coefficient vector $\boldsymbol{\gamma}_\theta$ collects the intercept and all predictor effects for parameter $\theta$ in one object, matching the columns of the corresponding design matrix. Specifically, `beta_nu` (a `vector[P_nu]`) contains the population mean drift rate `mu_nu`, the covariate effect `beta_nu_1`, and the condition effect `beta_nu_2`. `beta_alpha` contains the intercept and the average condition effect (`mu_alpha` and `beta_alpha_2`), and `beta_tau` likewise contains the intercept and the condition effect (`mu_tau` and `beta_tau_2`). The individual-level parameters `alpha`, `nu`, and `tau` are $I \times K$ matrices, which gives each participant a separate estimate per condition.
+
+Compared to @chavez2025ez, we relaxed some of the parameter constraints. We estimated the group-level means as unbounded regression coefficients, originally, the group-level mean of $\alpha$ had an upper bound at $3.0$ and the group-level mean of $\nu$ was bounded between $-3$ and $3$. We extended the upper bound of the group-level standard deviation of $\alpha$ (`sigma_alpha`) from $0.4$ to $0.8$ and the upper bound of `sigma_tau` from $0.25$ to $0.6$. For `sigma_nu`, we set the lower bound to $0$ and removed the upper bound. At the individual level, `nu` is no longer constrained. We made these changes to let the parameters vary more freely, so that we could confirm that the model still yields sensible results when the parameters are less constrained.
+
+In addition, we included a vector of by-participant random slopes `v` of length $I$ for the condition effect on boundary separation. Each element $v_i$ captures how much participant $i$ deviates from the average condition effect $\gamma^{(\alpha)}$ when shifting from the one to the other condition. The random slopes were assumed to be normally distributed with mean zero and standard deviation `sigma_v`, which is itself a free parameter with a lower bound at zero. A larger `sigma_v` indicates greater individual variability in condition-driven changes in response caution and `sigma_v` near zero indicates that participants adjust their boundary separation by a similar amount.
+
+```{stan output.var="model_cond", cache = T, eval = F, echo = TRUE}
+parameters {
+
+  // regression coefficients: [intercept, predictors] per parameter
+  vector[P_nu]    beta_nu;      // [mu_nu, beta_nu_1, beta_nu_2]
+  vector[P_alpha] beta_alpha;   // [mu_alpha, beta_alpha_2]
+  vector[P_tau]   beta_tau;     // [mu_tau, beta_tau_2]
+
+  // group-level SDs
+  real<lower=0.1, upper=0.8>  sigma_alpha;
+  real<lower=0>               sigma_nu;
+  real<lower=0.05, upper=0.6> sigma_tau;
+
+  // by-participant random slopes for condition effect on alpha
+  vector[I]     v;        // participant deviations from beta_alpha_2
+  real<lower=0> sigma_v;  // SD of random slopes
+
+  // individual-level parameters (I x K)
+  matrix<lower=0.1, upper=3.0>[I, K] alpha;
+  matrix[I, K]                       nu;
+  matrix<lower=0.05>[I, K]           tau;
+}
+```
+
+The last block (`model`) includes the prior distributions for the regression coefficients and group-level standard deviations, the hierarchical distributions of the individual-level parameters, and the likelihood. Here, we focus on the hierarchical structure and the likelihood. We discuss the full model, including priors, at a later stage (see 'Application'), when we show how the model can be applied.
+
+The `model` block iterates over all participant–condition cells. For each cell $(i, k)$, the mean of each parameter's hierarchical distribution is obtained by multiplying the corresponding design-matrix row by the coefficient vector. This implements the structure $\mu_{ik}^{(\theta)} = \mathbf{X}_{ik}^{(\theta)}\,\boldsymbol{\gamma}_{\theta}$.
+
+For the drift rate, `X_nu[i, k] * beta_nu` computes $\mu^{(\nu)} + x_{i1}\gamma_1^{(\nu)} + x_{ik2}\gamma_2^{(\nu)}$. For boundary separation, the predicted mean is $\mu^{(\alpha)} + x_{ik2}(\gamma^{(\alpha)} + v_i)$: the fixed part `X_alpha[i, k] * beta_alpha` is expanded by `v[i] * X_alpha[i, k][cond_col_alpha]`, where `X_alpha[i, k][cond_col_alpha]` is the condition dummy $x_{ik2}$ and `v[i]` is the participant-specific deviation from the average condition effect. For non-decision time, `X_tau[i, k] * beta_tau` computes $\mu^{(\tau)} + x_{ik2}\gamma^{(\tau)}$. The random slopes `v` are drawn from a normal distribution with mean zero and standard deviation `sigma_v`. The individual-level parameters `nu[i, k]`, `alpha[i, k]`, and `tau[i, k]` are drawn from normal distributions centred on these predicted means, with the group-level standard deviations capturing the remaining between-person variability within each condition.
+
+The likelihood is based on the equations of the EZ diffusion model, which describe how the observed behavioural data (accuracy, mean RT, and RT variance) relate to the underlying decision parameters. Specifically, for each participant $i$ in condition $k$, the predicted probability of a correct response $\pi_{ik}$, the predicted mean of the correct RTs $M_{ik}$, and the predicted variance of the correct RTs $\Sigma_{ik}$ are computed as transformations of the latent parameters $\alpha_{ik}$, $\nu_{ik}$, and $\tau_{ik}$ (see 'Modelling the EZ diffusion model').
+
+These predictions are then plugged into the likelihood functions. The number of correct responses `C[i, k]` is modelled as a binomial draw from `J[i, k]` trials with success probability $\pi_{ik}$. The mean RT for correct responses `MRT[i, k]` is modelled as a normal distribution centred on $M_{ik}$, with a standard deviation that reflects the expected variability of the sample mean given the number of correct responses `C[i, k]`. Similarly, the observed RT variance `VRT[i, k]` is modelled as a normal distribution centred on $\Sigma_{ik}$, with a standard deviation that reflects the expected variability of a variance estimate based on the number of correct responses `C[i, k]`. Therefore, the model uses the summary statistics, while still taking their uncertainty into account.
+
+```{stan output.var="model_cond", cache = T, eval = F, echo = TRUE}
+model {
+  // prior on random-slope SD
+  sigma_v ~ normal(0, 0.5);
+  v       ~ normal(0, sigma_v);
+
+  for (i in 1:I) {
+    for (k in 1:K) {
+      // design-matrix-predicted means
+      real mean_nu_ik    = X_nu[i, k]    * beta_nu;
+      // fixed condition effect + participant-specific deviation
+      real mean_alpha_ik = X_alpha[i, k] * beta_alpha + v[i] * X_alpha[i, k][cond_col_alpha];
+      real mean_tau_ik   = X_tau[i, k]   * beta_tau;
+
+      // hierarchical distributions
+      nu[i, k]    ~ normal(mean_nu_ik,    sigma_nu);
+      alpha[i, k] ~ normal(mean_alpha_ik, sigma_alpha);
+      tau[i, k]   ~ normal(mean_tau_ik,   sigma_tau);
+
+      // EZ likelihood
+      real u         = exp(-alpha[i, k] * nu[i, k]);
+      real pi_c      = 1.0 / (1.0 + u);
+      real mu_rt     = tau[i, k] + (alpha[i, k] / (2.0 * nu[i, k])) *
+                       ((1.0 - u) / (1.0 + u));
+      real sigma2_rt = (alpha[i, k] / (2.0 * pow(nu[i, k], 3))) *
+                       ((1.0 - 2.0 * alpha[i, k] * nu[i, k] * u - u^2) /
+                        square(1.0 + u));
+
+      C[i, k]   ~ binomial(J[i, k], pi_c);
+      MRT[i, k] ~ normal(mu_rt,     sqrt(sigma2_rt / C[i, k]));
+      VRT[i, k] ~ normal(sigma2_rt, sqrt(2.0 * square(sigma2_rt) / (C[i, k] - 1)));
+    }
+  }
+}
+```
+
+
+
+# Application to Real Data
+
+To illustrate how the hierarchical Bayesian EZ diffusion model can be applied in practice, we re-analysed the behavioural data of @grabowska2025individual, who studied post-response adaptation in a speeded flanker task. @grabowska2025individual fitted a hierarchical four-parameter Wiener diffusion model (ref??) to the single-trial data and were interested in how the response on the preceding trial (correct vs. error) and the amplitude of the error- and correct-related negativity (ERN/CRN) relate to drift rate and boundary separation on the following trial. We used the same data and tried to use a similar effect structure, as far as the EZ DDM allowed it. 
+
+## Data
+
+The dataset consists of $I = 222$ participants who completed a speeded arrow flanker task with $70\%$ congruent and $30\%$ incongruent trials and a response window of $600$ ms [for details, see @grabowska2025individual]. The data are available on OSF (https://osf.io/jszyh/). We applied the trial selection of @grabowska2025individual, which follows @mattes2022: Only trials that were part of a correct–correct–X–P sequence were analysed, where X is the reference trial that provides the response type (correct or error) and P is the trial on which adaptation is observed. Trials with RTs above $1000$ ms and trials with a log-transformed RT outside the participant mean $\pm 3$ standard deviations were excluded.
+
+For each participant, we sorted the P trials into $K = 4$ cells, defined by the congruency of the current trial and the accuracy of the preceding trial:
+
+| Cell $k$ | Condition (current trial) | Response type (preceding trial) | $c_k$ | $r_k$ |
+|:--------:|:--------------------------|:--------------------------------|:-----:|:-----:|
+| 1 | Congruent   | Correct | $+1$ | $+1$ |
+| 2 | Congruent   | Error   | $+1$ | $-1$ |
+| 3 | Incongruent | Correct | $-1$ | $+1$ |
+| 4 | Incongruent | Error   | $-1$ | $-1$ |
+
+Both factors were contrast-coded ($\pm 1$). Note that @grabowska2025individual coded the response type the other way round (error $= 1$, correct $= -1$), so effects involving response type were expected to have the opposite sign to our result.
+
+For each participant–cell combination, we computed the number of trials $J_{ik}$, the number of correct responses $C_{ik}$, and the mean ($MRT_{ik}$) and variance ($VRT_{ik}$) of the response times. <!-- Our script currently computes MRT and VRT over all trials in a cell (correct and error), instead of just the correct RTs only and uses C as the sample size. I feel like there was a reason why we did not just do correct trials (sub$rt[sub$acc_bin == 1])..? --> Because errors are rare in this task, the post-error cells contain far fewer trials than the post-correct cells. On average, participants contributed about $202$ post-correct and $25$ post-error trials [@grabowska2025individual], so the incongruent post-error cell typically contains fewer than ten trials. <!-- Do I need to report the exact cell counts? --> Cells with fewer than two trials do not allow a variance to be computed. For these cells, $MRT_{ik}$ and $VRT_{ik}$ were replaced by the mean across participants for that cell, and $J_{ik}$ was set to $2$. Second, $C_{ik}$ was restricted to the range $[1, J_{ik} - 1]$, so that every cell contains at least one correct and one incorrect response. <!-- DO I need to report how many cells were affected by that? -->
+
+
+## The Model
+
+Since @grabowska2025individual modelled the effects of interest on drift rate and boundary separation, and non-decision time was not expected to vary with the predictors, we specified the following structure.
+We tried to stay as close as possible to the analysis of @grabowska2025individual but also needed to specify a model that can be identified from summary statistics.
+
+The drift rate in cell $k$ was modelled as a function of condition, response type, and their interaction, with person-specific (random) slopes for all three effects and one intercept:
+$$
+\nu_{ik} \sim \mathcal{N}\!\big(\gamma_{\nu,0} + \nu^{(c)}_i c_k + \nu^{(r)}_i r_k + \nu^{(cr)}_i c_k r_k,\ \sigma_\nu^2\big),
+$$
+
+$$
+\nu^{(c)}_i \sim \mathcal{N}(\gamma_{\nu,c},\ \sigma_{\nu,c}^2), \quad
+\nu^{(r)}_i \sim \mathcal{N}(\gamma_{\nu,r},\ \sigma_{\nu,r}^2), \quad
+\nu^{(cr)}_i \sim \mathcal{N}(\gamma_{\nu,cr},\ \sigma_{\nu,cr}^2).
+$$
+
+Boundary separation was modelled with a person-specific (random) intercept and fixed effects of response type and condition:
+$$
+\alpha_{ik} \sim \mathcal{N}_{(0.1,\,3.0)}\!\big(\alpha^{(0)}_i + \gamma_{\alpha,r}\, r_k + \gamma_{\alpha,c}\, c_k,\ \sigma_\alpha^2\big), \quad
+\alpha^{(0)}_i \sim \mathcal{N}(\gamma_{\alpha,0},\ \sigma_{\alpha,0}^2).
+$$
+
+Non-decision time had only a person-specific intercept:
+$$
+\tau_{ik} \sim \mathcal{N}_{(0.05,\,\infty)}\!\big(\tau^{(0)}_i,\ \sigma_\tau^2\big), \quad
+\tau^{(0)}_i \sim \mathcal{N}(\gamma_{\tau,0},\ \sigma_{\tau,0}^2).
+$$
+
+There were two types of standard deviations. The standard deviations $\sigma_\nu$, $\sigma_\alpha$, and $\sigma_\tau$ described how much the cell-level parameters of a person deviate from that person's predicted value. The standard deviations of the random effects ($\sigma_{\nu,c}$, $\sigma_{\nu,r}$, $\sigma_{\nu,cr}$, $\sigma_{\alpha,0}$, $\sigma_{\tau,0}$) described individual differences between participants.
+
+
+### Implementation in Stan
+
+In the `data`, the design matrices followed the same logic as before: For our regression model, `X_nu` had four columns (intercept, condition, response type, interaction), `X_alpha` had three columns (intercept, response type, condition), and `X_tau` had only the intercept. The prior parameters were passed as data, with the means in the first row and the standard deviations (or the shape and rate of a gamma prior) in the second row. This way, the priors can be changed in R without recompiling the model.
+
+```{stan output.var = "model_app", echo = TRUE, eval = FALSE}
+data {
+  int<lower=1> I;
+  int<lower=1> K;
+  int<lower=1> P_nu;
+  int<lower=1> P_alpha;
+  int<lower=1> P_tau;
+
+  array[I, K] int<lower=1> J;
+  array[I, K] int<lower=0> C;
+  matrix[I, K] MRT;
+  matrix[I, K] VRT;
+
+  array[I, K] row_vector[P_nu]    X_nu;
+  array[I, K] row_vector[P_alpha] X_alpha;
+  array[I, K] row_vector[P_tau]   X_tau;
+
+  // priors: row 1 = means, row 2 = SDs
+  matrix[2, P_nu]    prior_beta_nu;
+  matrix[2, P_alpha] prior_beta_alpha;
+  matrix[2, P_tau]   prior_beta_tau;
+
+  vector[2] prior_sigma_nu;
+  vector[2] prior_sigma_alpha;
+  vector[2] prior_sigma_tau;
+
+  vector[2] prior_sigma_nu_c;
+  vector[2] prior_sigma_nu_r;
+  vector[2] prior_sigma_nu_cr;
+
+  vector[2] prior_sigma_alpha_intercept;
+  vector[2] prior_sigma_tau_intercept;
+}
+```
+
+
+
+The `parameters` block contained the population-level coefficients (`beta_nu`, `beta_alpha`, and `beta_tau`, corresponding to $\boldsymbol{\gamma}_\nu$, $\boldsymbol{\gamma}_\alpha$, and $\gamma_{\tau,0}$), the cell-level standard deviations, the standard deviations of the random effects, the standardised person-specific deviations `z_*`, and the cell-level parameters `nu`, `alpha`, and `tau`.
+
+Our model deviates in random-effect structure from @grabowska2025individual. These deviations were necessary to obtain a model that can be estimated from summary statistics. We started from a model with person-specific effects on every term, that is, random intercepts for all three parameters and random slopes for all effects on drift rate and boundary separation. However, the cell-level standard deviation of the drift rate, $\sigma_\nu$, and the standard deviation of the person-specific drift intercepts could not be separated well ($\hat{R} = 1.21$, effective sample size below $10$ for $\sigma_\nu$). In addition, the standard deviations of the random slopes for response type ($0.009$) and condition ($0.005$) on boundary separation were estimated to be very close to zero. Therefore, we first removed the person-specific drift intercept, so `beta_nu[1]` was shared by all participants. In the EZ DDM, each participant has one set of summary statistics per cell, that is, four observations of each parameter. A person-specific intercept and a person-specific deviation in each cell are then only weakly distinguishable. Without the random intercept, the between-person variance in the drift intercept is absorbed by $\sigma_\nu$. Then, we treated the effects of response type and condition on boundary separation as fixed (`beta_alpha[2]` and `beta_alpha[3]`), because the random-slope model showed merely any individual variability for these effects and fixing them stabilised the sampler. Finally, we made the slopes for response type and the interaction on drift rate person-specific (`z_nu_r`, `z_nu_cr`), although @grabowska2025individual treated these effects as fixed. This way we could discover individual differences with the hierarchical model through the posterior of $\sigma_{\nu,r}$ and $\sigma_{\nu,cr}$.
+
+The upper bound of $0.8$ on `sigma_alpha` prevented the sampler from exploring implausibly large cell-level variability in boundary separation, which led to numerical failures during warm-up. The non-decision time intercept was bounded to a plausible range between $0.05$ and $0.45$ seconds.
+
+```{stan output.var = "model_app", echo = TRUE, eval = FALSE}
+parameters {
+  // population-level coefficients
+  vector[P_nu]    beta_nu;    // intercept, condition, response type, interaction
+  vector[P_alpha] beta_alpha; // intercept, response type, condition
+  real<lower=0.05, upper=0.45> beta_tau;
+
+  // cell-level SDs
+  real<lower=0>            sigma_nu;
+  real<lower=0, upper=0.8> sigma_alpha;
+  real<lower=0>            sigma_tau;
+
+  // SDs of the random slopes on drift rate
+  real<lower=0> sigma_nu_c;
+  real<lower=0> sigma_nu_r;
+  real<lower=0> sigma_nu_cr;
+
+  // SDs of the random intercepts
+  real<lower=0> sigma_alpha_intercept;
+  real<lower=0> sigma_tau_intercept;
+
+  // standardised person-specific deviations (non-centred)
+  vector[I] z_nu_c;
+  vector[I] z_nu_r;
+  vector[I] z_nu_cr;
+  vector[I] z_alpha_intercept;
+  vector[I] z_tau_intercept;
+
+  // cell-level parameters
+  matrix[I, K]                       nu;
+  matrix<lower=0.1, upper=3.0>[I, K] alpha;
+  matrix<lower=0.05>[I, K]           tau;
+}
+```
+
+
+All random effects were implemented with a non-centred parameterisation. Instead of sampling the person-specific effects directly, the model sampled standardised deviations $z_i \sim \mathcal{N}(0, 1)$ and computed, for example, $\nu^{(c)}_i = \gamma_{\nu,c} + \sigma_{\nu,c}\, z_i$. This separated the location and scale of the random effects in the posterior and improved sampling when the random-effect standard deviations were small [@betancourt2015hamiltonian], which was the case for the response-type and interaction slopes here.
+
+```{stan output.var = "model_app", echo = TRUE, eval = FALSE}
+transformed parameters {
+  // person-specific intercepts
+  vector[I] alpha_intercept = beta_alpha[1] + sigma_alpha_intercept * z_alpha_intercept;
+  vector[I] tau_intercept   = beta_tau      + sigma_tau_intercept   * z_tau_intercept;
+
+  // person-specific slopes on drift rate
+  vector[I] nu_c  = beta_nu[2] + sigma_nu_c  * z_nu_c;
+  vector[I] nu_r  = beta_nu[3] + sigma_nu_r  * z_nu_r;
+  vector[I] nu_cr = beta_nu[4] + sigma_nu_cr * z_nu_cr;
+}
+```
+
+
+
+In the `model` block, we first assigned the priors (see 'Priors') and then looped over all participant–cell combinations, computing the predicted mean of each cell-level parameter from the design matrices and the person-specific effects, drawing the cell-level parameters from their hierarchical distributions, and evaluating the likelihood.
+
+The likelihood contained three numerical safeguards. First, the drift rate entering the EZ equations was bounded to be no lower than $0.01$, because the equations for $M$ and $\Sigma$ contain $\nu$ in the denominator. Second, the predicted variance $\Sigma_{ik}$ was bounded to be no lower than $10^{-8}$. $\Sigma_{ik}$ was used as the variance of the sampling distributions of both $MRT_{ik}$ and $VRT_{ik}$, so it had to be positive. For small values of $\alpha_{ik}\nu_{ik}$, however, the numerator of $\Sigma_{ik}$ could be close to zero, and rounding could make the computed variance zero or slightly negative, especially during warm-up, when the sampler explores extreme parameter values. A non-positive variance would make the normal densities undefined, and the sampler would reject the proposal. Finally, in the sampling distributions of $MRT_{ik}$ and $VRT_{ik}$, the terms $C_{ik}$ and $C_{ik} - 1$ were bounded to be no lower than $1$. The standard error of the mean RT was divided by the number of correct trials, and the standard error of the RT variance by the number of correct trials minus one, so cells with zero or one correct response would have led to a division by zero. Since we had already restricted $C_{ik}$ to at least $1$ before fitting, this bound only mattered for cells with exactly one correct response. For those cells, the sample variance was not defined, and the bound kept the likelihood finite.
+
+```{stan output.var = "model_app", echo = TRUE, eval = FALSE}
+model {
+  // priors on population-level coefficients
+  for (p in 1:P_nu)
+    beta_nu[p] ~ normal(prior_beta_nu[1, p], prior_beta_nu[2, p]);
+  for (p in 1:P_alpha)
+    beta_alpha[p] ~ normal(prior_beta_alpha[1, p], prior_beta_alpha[2, p]);
+  beta_tau ~ normal(prior_beta_tau[1, 1], prior_beta_tau[2, 1]);
+
+  // priors on cell-level SDs
+  sigma_nu    ~ normal(prior_sigma_nu[1],    prior_sigma_nu[2]);
+  sigma_alpha ~ normal(prior_sigma_alpha[1], prior_sigma_alpha[2]);
+  sigma_tau   ~ normal(prior_sigma_tau[1],   prior_sigma_tau[2]);
+
+  // priors on random-effect SDs
+  sigma_nu_c            ~ gamma(prior_sigma_nu_c[1], prior_sigma_nu_c[2]);
+  sigma_nu_r            ~ normal(prior_sigma_nu_r[1],  prior_sigma_nu_r[2]);
+  sigma_nu_cr           ~ normal(prior_sigma_nu_cr[1], prior_sigma_nu_cr[2]);
+  sigma_alpha_intercept ~ gamma(prior_sigma_alpha_intercept[1],
+                                prior_sigma_alpha_intercept[2]);
+  sigma_tau_intercept   ~ gamma(prior_sigma_tau_intercept[1],
+                                prior_sigma_tau_intercept[2]);
+
+  // standardised person-specific deviations
+  z_nu_c            ~ normal(0, 1);
+  z_nu_r            ~ normal(0, 1);
+  z_nu_cr           ~ normal(0, 1);
+  z_alpha_intercept ~ normal(0, 1);
+  z_tau_intercept   ~ normal(0, 1);
+
+  for (i in 1:I) {
+    for (k in 1:K) {
+      // predicted means of the cell-level parameters
+      real mu_nu_ik = beta_nu[1] * X_nu[i, k][1]
+                    + nu_c[i]    * X_nu[i, k][2]
+                    + nu_r[i]    * X_nu[i, k][3]
+                    + nu_cr[i]   * X_nu[i, k][4];
+      real mu_alpha_ik = alpha_intercept[i] * X_alpha[i, k][1]
+                       + beta_alpha[2]      * X_alpha[i, k][2]
+                       + beta_alpha[3]      * X_alpha[i, k][3];
+      real mu_tau_ik = tau_intercept[i];
+
+      // hierarchical distributions of the cell-level parameters
+      nu[i, k]    ~ normal(mu_nu_ik,    sigma_nu);
+      alpha[i, k] ~ normal(mu_alpha_ik, sigma_alpha);
+      tau[i, k]   ~ normal(mu_tau_ik,   sigma_tau) T[0.05, ];
+
+      // EZ likelihood
+      real a = alpha[i, k];
+      real v = fmax(nu[i, k], 0.01);           // safeguard 1
+      real e = exp(-a * v);
+      real pi_c   = 1.0 / (1.0 + e);
+      real mu_rt  = tau[i, k] + (a / (2.0 * v)) * ((1.0 - e) / (1.0 + e));
+      real sig2rt = fmax((a / (2.0 * pow(v, 3)))
+                         * ((1.0 - 2.0 * a * v * e - square(e)) / square(1.0 + e)),
+                         1e-8);                // safeguard 2
+
+      C[i, k]   ~ binomial(J[i, k], pi_c);
+      MRT[i, k] ~ normal(mu_rt,  sqrt(sig2rt / fmax(C[i, k], 1)));            // safeguard 3
+      VRT[i, k] ~ normal(sig2rt, sqrt(2.0 * square(sig2rt) / fmax(C[i, k] - 1, 1)));
+    }
+  }
+}
+```
+
+## Priors
+
+We used the priors of @grabowska2025individual so that differences in the results could be attributed to the model and not the priors. For the population-level effects on drift rate, we used
+$$
+\begin{aligned}
+\gamma_{\nu,0} &\sim \mathcal{N}(0,\ 2^2), \\
+\gamma_{\nu,c} &\sim \mathcal{N}(0,\ 2^2), \\
+\gamma_{\nu,r} &\sim \mathcal{N}(0,\ 0.5^2), \\
+\gamma_{\nu,cr} &\sim \mathcal{N}(0,\ 0.5^2).
+\end{aligned}
+$$
+For boundary separation, we used
+$$
+\begin{aligned}
+\gamma_{\alpha,0} &\sim \mathcal{N}(1,\ 1^2), \\
+\gamma_{\alpha,r} &\sim \mathcal{N}(0,\ 0.2^2), \\
+\gamma_{\alpha,c} &\sim \mathcal{N}(0,\ 1^2).
+\end{aligned}
+$$
+
+The non-decision time intercept received the prior
+$$
+\gamma_{\tau,0} \sim \mathcal{N}_{(0.05,\,0.45)}(0.1,\ 0.2^2).
+$$
+
+The standard deviations of the random effects that were also defined by @grabowska2025individual received gamma priors (shape, rate):
+$$
+\begin{aligned}
+\sigma_{\nu,c} &\sim \text{Gamma}(1,\ 1), \\
+\sigma_{\alpha,0} &\sim \text{Gamma}(1,\ 1), \\
+\sigma_{\tau,0} &\sim \text{Gamma}(0.3,\ 1).
+\end{aligned}
+$$
+
+The random slopes of response type and the interaction on drift rate had no counterpart in @grabowska2025individual (effects were fixed) and received half-normal priors:
+$$
+\begin{aligned}
+\sigma_{\nu,r} &\sim \mathcal{N}^{+}(0,\ 0.5^2), \\
+\sigma_{\nu,cr} &\sim \mathcal{N}^{+}(0,\ 0.5^2).
+\end{aligned}
+$$
+
+The cell-level standard deviations were specific to our model, because the EZ DDM works with cells and not trials. They received weakly informative normal priors truncated at zero:
+$$
+\begin{aligned}
+\sigma_\nu &\sim \mathcal{N}_{(0,\,\infty)}(0.3,\ 0.3^2), \\
+\sigma_\alpha &\sim \mathcal{N}_{(0,\,0.8)}(0.3,\ 0.3^2), \\
+\sigma_\tau &\sim \mathcal{N}_{(0,\,\infty)}(0.1,\ 0.15^2).
+\end{aligned}
+$$
+
+## Fitting the Model
+
+The model was fitted in Stan via `rstan` with four chains of $2000$ iterations each, of which the first $1000$ were discarded as warm-up. Convergence was assessed with $\hat{R}$ for all population-level parameters. If any $\hat{R}$ exceeded $1.05$, the model would have been refitted with six chains of $4000$ iterations, `adapt_delta` $= 0.99$, and a maximum tree depth of $13$. However, this was not necessary, as all population-level parameters reached $\hat{R} \leq 1.05$. The largest value was $1.049$, for the cell-level standard deviation of boundary separation $\sigma_\alpha$, which also had the lowest effective sample size ($106$). All other population-level parameters had effective sample sizes above $500$. There were ??? divergent transitions. The Stan model and the R script are available at https://github.com/annanerum/BayEZ.
+
+## Results 
+
+We compared the posterior estimates of the hierarchical EZ DDM with the estimates of the model used by @grabowska2025individual. However, some notes must be kept in mind. First, @grabowska2025individual coded the response type the other way round (error $= 1$, correct $= -1$). To make the estimates comparable, we flipped the sign of all their effects involving response type. Second, their effects are conditional on the single-trial ERN/CRN amplitudes and their interactions with response type. We included only behavioural measures and not these predictors, because the EZ DDM only receives summary statistics per cell. This means, our coefficients may have absorbed the variance that the EEG predictors explain in their model. This mainly affected the response-type effects and their interaction, because ERN amplitudes were related to response type. Lastly, @grabowska2025individual report the 95% highest density intervals, whereas we report the equal-tailed (??) 95% credible intervals. The full table of posterior estimates of our model (and theirs??) are listed in Table \@ref(tab:app-estimates) in the Supplement. Figure \@ref(fig:app-forest-effects) shows the population-level estimates of both models side by side.
+
+```{r app-forest-effects, echo = FALSE, message = FALSE, warning = FALSE, fig.cap = "Population-level estimates of the hierarchical EZ DDM (filled points, posterior mean and 95\\% credible interval) and of the drift diffusion model used by Grabowska et al. (2025; open points, posterior mean and 95\\% highest density interval). Condition: congruent $= 1$, incongruent $= -1$. Response type of the preceding trial: correct $= 1$, error $= -1$", fig.width = 6.5, fig.height = 6, fig.pos = "H"}
+library(ggplot2)
+est <- read.csv(file.path("output_krakow_final", "krakow_estimates.csv"))
+rownames(est) <- est$param
+
+grab_eff <- data.frame(
+  param = c("mu_nu", "b_nu_condition", "b_nu_resp_type", "b_nu_interaction",
+            "mu_alpha", "b_alpha_condition", "b_alpha_resp_type"),
+  mean  = c(4.03, 3.07,  0.18, -0.21, 1.48, 0.45, 0.09),
+  lo95  = c(3.87, 2.92,  0.12, -0.27, 1.44, 0.42, 0.08),
+  hi95  = c(4.19, 3.22,  0.24, -0.15, 1.52, 0.48, 0.10)
+)
+eff_info <- data.frame(
+  param = grab_eff$param,
+  panel = c("Drift: intercept", "Drift: condition", "Drift: response type",
+            "Drift: interaction", "Boundary: intercept", "Boundary: condition",
+            "Boundary: response type")
+)
+ez_eff <- est[grab_eff$param, c("param", "mean", "lo95", "hi95")]
+eff <- rbind(
+  cbind(ez_eff,   model = "Hierarchical EZ"),
+  cbind(grab_eff, model = "Grabowska et al. (2025)")
+)
+eff <- merge(eff, eff_info, by = "param")
+eff$panel <- factor(eff$panel, levels = eff_info$panel)
+eff$model <- factor(eff$model, levels = c("Grabowska et al. (2025)", "Hierarchical EZ"))
+
+p_eff <- ggplot(eff, aes(x = mean, y = model, shape = model)) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_errorbar(aes(xmin = lo95, xmax = hi95), width = 0.25, orientation = "y") +
+  geom_point(size = 2.5, fill = "white") +
+  scale_shape_manual(values = c("Hierarchical EZ" = 16, "Grabowska et al. (2025)" = 21),
+                     breaks = c("Hierarchical EZ", "Grabowska et al. (2025)")) +
+  scale_x_continuous(n.breaks = 4) +
+  facet_wrap(~ panel, scales = "free_x", ncol = 2, dir = "v") +
+  expand_limits(x = 0) +
+  labs(x = "Posterior mean and 95% interval", y = NULL, shape = NULL) +
+  papaja::theme_apa() +
+  theme(legend.position = "bottom", axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+p_eff
+```
+
+**Intercepts.** The EZ DDM estimated a drift rate of $\gamma_{\nu,0} = 3.14$, 95% CrI $[3.05, 3.23]$, and a boundary separation of $\gamma_{\alpha,0} = 0.70$, $[0.69, 0.71]$. The population mean non-decision time was $\gamma_{\tau,0} = 0.211$ s, $[0.207, 0.215]$. Both the drift rate and boundary separation estimates are lower than the estimates of @grabowska2025individual ($4.03$ and $1.48$). These differences may have emerged because the two models use the data differently. The EZ DDM we used here assumes that correct and error RTs follow the same distribution. In this task, errors were about $50$ ms faster than correct responses [@grabowska2025individual], which violates this assumption, whereas the full Wiener model uses both RT distributions. To investigate how much of the difference is due to the structure of the EZ  DDM we fitted drift diffusion models with three to seven parameters to a simulated dataset with known parameters in the next section (refer to section). 
+
+**Condition.** In the EZ DDM, drift rates were much higher on congruent than on incongruent trials ($\gamma_{\nu,c} = 2.15$, $[2.02, 2.27]$, i.e., a difference of about $4.3$ between conditions), and boundary separation was slightly higher on congruent trials ($\gamma_{\alpha,c} = 0.054$, $[0.048, 0.060]$). In the incongruent trials, accuracies were only moderately above chance. @grabowska2025individual found effects in the same direction, but larger, especially for boundary separation ($3.07$ for drift rate and $0.45$ for boundary separation). Therefore, @grabowska2025individual attributed a bigger part of the congruency effect to response caution, whereas our model implied more changes in drift rate.
+
+**Response type of the preceding trial.** After errors, drift rate was slightly lower than after correct responses ($\gamma_{\nu,r} = 0.10$, $[0.01, 0.19]$). This was coherent with @grabowska2025individual ($0.18$ in our coding). For boundary separation, the two models were not coherent in their prediction. The EZ DDM showed no credible change after errors ($\gamma_{\alpha,r} = 0.005$, $[-0.001, 0.012]$), whereas @grabowska2025individual found lower boundary separation after errors ($0.09$ in our coding), at an average ERN/CRN amplitude. Thus, the behavioural data alone provided no evidence that participants became more cautious after an error. However, in the model of @grabowska2025individual, the post-error adjustment of caution was somewhat tied to the ERN amplitude, as  more pronounced ERN amplitudes were associated with higher boundary separation on the next trial. In our model, the response-type effect averaged over this relationship, which may have led to a smaller effect.
+
+**Interaction.** In the EZ DDM, the effect of the preceding error depended on the congruency of the current trial ($\gamma_{\nu,cr} = 0.31$, $[0.22, 0.40]$). After an error, drift rate decreased on congruent trials (from $5.70$ to $4.87$) but increased on incongruent trials (from $0.78$ to $1.20$). In other words, the congruency effect on drift rate was smaller after errors ($3.67$) than after correct responses ($4.92$). This pattern is consistent with a post-error shift of attention towards the target and away from distracting flankers, which should be helping on incongruent trials and have some costs on congruent trials [@danielmeier2011post; @king2010post]. The data supported this, since the congruency effect on accuracy was smaller after errors ($99.4\%$ vs. $73.3\%$ correct) than after correct responses ($99.3\%$ vs. $64.0\%$). Because accuracy on congruent trials showed a ceiling effect, this difference may have emerged due to higher accuracy on incongruent trials after errors. The post-error decrease in drift rate on congruent trials could therefore stem from response times. The interaction reported by @grabowska2025individual was at $-0.21$ __and pointed in the opposite direction__??. However, their interaction was estimated conditional on the trial-level ERN/CRN amplitude, which differed between post-error and post-correct trials. This means their coefficient described the post-error adjustment at a fixed amplitude, whereas ours described the average adjustment after an error, so the two do not quantify the same effect.
+
+
+**Cell-level estimates.** Figure \@ref(fig:)?? shows the posterior means of the cell-level drift rates and boundary separations for all participants. Although non-decision time had no predictors, the cell-level estimates of $\tau$ were slightly longer for incongruent and for post-error cells (cell means between $0.196$ and $0.223$ seconds). Some of the slowing in these cells may therefore be absorbed by the cell-level deviations of $\tau$ instead of drift rate or boundary separation.
+
+
+**Individual differences.** Figure \@ref(fig:app-forest-sds) shows the posterior estimates of the standard deviations, together with the corresponding estimates by @grabowska2025individual (if their model had a counterpart). Participants differed in the size of the congruency effect on drift rate ($\sigma_{\nu,c} = 0.58$, $[0.45, 0.71]$), but less so than in the results by @grabowska2025individual ($1.02$). The 95% credible intervals of all individual condition slopes $\nu^{(c)}_i$ were above zero. This means there are quantitative individual difference [@haaf2017developing] because every participant showed the effect, but to a different degree. In contrast, the standard deviations of the individual slopes for response type ($\sigma_{\nu,r} = 0.06$, $[0.003, 0.18]$) and for the interaction ($\sigma_{\nu,cr} = 0.05$, $[0.002, 0.15]$) were small and their posteriors concentrated near zero. The individual estimates $\nu^{(r)}_i$ and $\nu^{(cr)}_i$ were shrunk almost completely towards the population means, and every individual credible interval for $\nu^{(r)}_i$ included zero. With about $25$ post-error trials per person, the data therefore did not allow to infer whether participants differed in how they adapt after errors. @grabowska2025individual treated these effects as fixed, but they likewise found that individual-level effects on drift rate were inconclusive.
+
+Because the drift intercept was not person-specific in our model, the cell-level standard deviation of the drift rate ($\sigma_\nu = 1.00$, $[0.92, 1.09]$) also contained the between-person differences in the drift intercept. It is therefore close to the drift intercept variability of @grabowska2025individual ($1.13$). For boundary separation, the person-specific intercepts varied considerably less in the EZ DDM ($\sigma_{\alpha,0} = 0.058$, $[0.051, 0.066]$) than in their model ($0.26$). This was in line with the overall smaller scale of boundary separation in the EZ DDM. The person-specific intercepts of non-decision time varied little ($\sigma_{\tau,0} = 0.026$, $[0.023, 0.029]$).
+
+```{r app-forest-sds, echo = FALSE, message = FALSE, warning = FALSE, fig.cap = "Standard deviations of the hierarchical EZ DDM (filled points, posterior mean and 95\\% credible interval) and, where available, the corresponding estimates of Grabowska et al. (2025; open points, posterior mean and 95\\% highest density interval). 'Intercept' and 'slope' are between-person standard deviations. The 'cell level' standard deviations describe how much a person's parameter in a given cell deviates from that person's predicted value. *Because the drift intercept was not person-specific in our model, the cell-level standard deviation of the drift rate also contains the between-person variability of the drift intercept, it is therefore shown next to the intercept variability of Grabowska et al. (2025).", fig.width = 6.5, fig.height = 7, fig.pos = "H"}
+
+sd_info <- data.frame(
+  param = c("sigma_nu", "sigma_nu_cond", "sigma_nu_resp", "sigma_nu_cr",
+            "sigma_alpha_intercept", "sigma_alpha",
+            "sigma_tau_intercept", "sigma_tau"),
+  label = c("Cell level*", "Condition slope", "Response type slope", "Interaction slope",
+            "Intercept", "Cell level",
+            "Intercept", "Cell level"),
+  panel = c(rep("Drift rate", 4), rep("Boundary separation", 2),
+            rep("Non-decision time", 2))
+)
+
+grab_sd <- data.frame(
+  param = c("sigma_nu", "sigma_nu_cond", "sigma_alpha_intercept"),
+  mean  = c(1.13, 1.02, 0.26),
+  lo95  = c(1.02, 0.92, 0.23),
+  hi95  = c(1.25, 1.12, 0.29)
+)
+sds <- rbind(
+  cbind(est[sd_info$param, c("param", "mean", "lo95", "hi95")], model = "Hierarchical EZ"),
+  cbind(grab_sd, model = "Grabowska et al. (2025)")
+)
+sds <- merge(sds, sd_info, by = "param")
+sds$label <- factor(sds$label, levels = rev(c("Intercept", "Condition slope",
+                                              "Response type slope", "Interaction slope",
+                                              "Cell level", "Cell level*")))
+sds$panel <- factor(sds$panel, levels = c("Drift rate", "Boundary separation",
+                                          "Non-decision time"))
+sds$model <- factor(sds$model, levels = c("Hierarchical EZ", "Grabowska et al. (2025)"))
+
+p_sds <- ggplot(sds, aes(x = mean, y = label, shape = model)) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_errorbar(aes(xmin = lo95, xmax = hi95), width = 0.25, orientation = "y",
+                position = position_dodge(width = 0.6)) +
+  geom_point(size = 2.5, fill = "white", position = position_dodge(width = 0.6)) +
+  scale_shape_manual(values = c("Hierarchical EZ" = 16, "Grabowska et al. (2025)" = 21)) +
+  facet_wrap(~ panel, scales = "free", ncol = 1) +
+  expand_limits(x = 0) +
+  labs(x = "Posterior mean and 95% interval", y = NULL, shape = NULL) +
+  papaja::theme_apa() +
+  theme(legend.position = "bottom")
+
+p_sds
+```
+
+<!-- move this to the Supplement section??-->
+
+```{r app-estimates, echo = FALSE, results = "asis"}
+est <- read.csv(file.path("output_krakow_final", "krakow_estimates.csv"))
+
+labels <- c(
+  mu_nu                 = "$\\gamma_{\\nu,0}$ (drift intercept)",
+  b_nu_condition        = "$\\gamma_{\\nu,c}$ (drift: condition)",
+  b_nu_resp_type        = "$\\gamma_{\\nu,r}$ (drift: response type)",
+  b_nu_interaction      = "$\\gamma_{\\nu,cr}$ (drift: condition $\\times$ response type)",
+  mu_alpha              = "$\\gamma_{\\alpha,0}$ (boundary intercept)",
+  b_alpha_resp_type     = "$\\gamma_{\\alpha,r}$ (boundary: response type)",
+  b_alpha_condition     = "$\\gamma_{\\alpha,c}$ (boundary: condition)",
+  mu_tau                = "$\\gamma_{\\tau,0}$ (non-decision time intercept)",
+  sigma_nu              = "$\\sigma_{\\nu}$ (drift, cell level)",
+  sigma_alpha           = "$\\sigma_{\\alpha}$ (boundary, cell level)",
+  sigma_tau             = "$\\sigma_{\\tau}$ (non-decision time, cell level)",
+  sigma_nu_cond         = "$\\sigma_{\\nu,c}$ (drift: condition slope)",
+  sigma_nu_resp         = "$\\sigma_{\\nu,r}$ (drift: response type slope)",
+  sigma_nu_cr           = "$\\sigma_{\\nu,cr}$ (drift: interaction slope)",
+  sigma_alpha_intercept = "$\\sigma_{\\alpha,0}$ (boundary intercept)",
+  sigma_tau_intercept   = "$\\sigma_{\\tau,0}$ (non-decision time intercept)"
+)
+
+tab <- data.frame(
+  Parameter = unname(labels[est$param]),
+  Mean      = sprintf("%.3f", est$mean),
+  SD        = sprintf("%.3f", est$sd),
+  CrI       = sprintf("[%.3f, %.3f]", est$lo95, est$hi95),
+  Rhat      = sprintf("%.3f", est$rhat)
+)
+colnames(tab) <- c("Parameter", "Mean", "SD", "95\\% CrI", "$\\hat{R}$")
+
+papaja::apa_table(
+  tab,
+  caption = "Posterior estimates of the population-level parameters of the hierarchical EZ DDM",
+  note = "Condition: congruent $= 1$, incongruent $= -1$. Response type of the preceding trial: correct $= 1$, error $= -1$. CrI = equal-tailed credible interval.",
+  escape = FALSE
+)
+```
+
+
+### Limitations
+
+
+
+# 3, 4, 5 or 7 parameters? Comparison to the DDM 
+
+## Simulation Based Comparison
+
+## Application of all models 
+
+
+\newpage
+# Discussion
+
+\newpage
+## Maybe use for discussion
+
+### from @lee_how_2011-4
+
+what is a hierarchical model: any model that is more complicated than the simplest type of model (a set of parameters $\theta$ generate a set of data $d$ through a likelihood function $f$ 
+  - this simple model accommodates Signal Detection Theory (SDT; @green1966signal; widely used in the modelling of memory, decision-making and reasoning)
+  - the SDT model provides a mapping from two parameters (measuring discriminability and a response criterion) to observed data (hit and false-alarm counts)
+  - another example: the Ratcliff diffusion model [@ratcliff2008diffusion] provides a mapping from a range of parameters (controlling bias, caution, evidence ...) to the joint distribution of accuracy and response times for simple decisions
+  - there are lots of cognitive models consistent with non-hierarchical mappings from parameters to data 
+  - all of these models would be good starting points for a hierarchical Bayesian extension
+  - by adding additional structure to the simple parameter-to-data relationship, it is possible to extend existing successful models of memory, learning, decision-making etc.
+  
+  
+- hierarchical Bayesian models extend cognitive models by adding a second level that explains not only behaviour, but also how the underlying psychological parameters are generated
+- instead of treating parameters as fixed, they are modelled as varying across individuals or contexts according to a higher-level distribution
+- this makes it possible to capture *individual differences* in a principled way, rather than analysing them post-hoc
+- it also enables inference about group-level properties (e.g., means and variances), and therefore providing a structured description of how cognitive processes vary
+- this leads to deeper and more complete theories, because the model explains both behaviour and the variability in the mechanisms that produce it
+
+hierarchical Bayesian models can link the same underlying psychological parameters to multiple tasks or types of data
+- specifically, a single set of parameters $\theta$ generates multiple datasets through different likelihood functions corresponding to different cognitive processes
+- this differs from other hierarchical structures because the hierarchy operates across tasks rather than across levels of abstraction: instead of modelling each task separately, the approach jointly models all data, allowing shared latent variables to explain multiple phenomena
+- usually, tasks are often modelled sequentially rather than simultaneously 
+- explaining many different observed phenomena by using a few variables is important for theories in cognitive science
+- by jointly modelling tasks, inference improves because information is shared across datasets: this leads to more unified, coherent, and parsimonious theories of cognition
+
+- observed data $d$ can be generated by multiple different cognitive processes $f_{1}, ..., f_{n}$, each with their own parameters $\theta_{1}, ..., \theta_{n}$
+- a higher-level mixing process $h$, governed by parameters $z$ determines how these processes combine to produce the data
+- this allows behaviour to be explained as arising from a mixture of qualitatively different processes rather than a single unified mechanism
+- hierarchical Bayesian models can represent behaviour as the outcome of multiple underlying cognitive processes: instead of assuming a single process explains all observations, they allow different processes to contribute to the same dataset
+- this is useful when some data reflect different strategies, errors, or “contaminant” processes that are not part of the core cognitive mechanism
+- the approach preserves simple core models while accounting for additional variability through separate processes
+- mixture modelling provides a more realistic and flexible account of behaviour, especially when participants switch strategies or produce atypical responses
+- by separating processes, inference about the main cognitive mechanism improves, because it is not distorted by irrelevant or noisy data
+- therefore, hierarchical models support more accurate and theoretically meaningful explanations by decomposing behaviour into multiple contributing processes
+
+hierarchical Bayesian models allow multiple competing cognitive models to be combined within a single framework instead of selecting only one
+- different models can explain the same observed data, and a higher-level process determines how they contribute
+- this shows how these different models arise, by introducing a higher-level generative structure over the models
+- therefore, variation across models is not arbitrary but explained by underlying psychological mechanisms or principles
+- example by @kemp2008discovery: show that different cognitive representations (clusters, trees, spatial structures) can all be generated from one common graph-based process --> explains how people can flexibly use different representations across domains, while still relying on shared underlying mechanisms
+- idea shift from model comparison (which one is best?) to model integration (how are the models related)
+- providing a way to learn model structure from data and capture cognitive flexibility across tasks 
+- addressee theoretical issues, for example that there are many heuristic models but there is no unifying explanation when or why which one is used 
+- therefore Bayesian hierarchical modelling can support deeper and more coherent theories through linking lots of diverse cognitive models to shared underlying processes 
+
+
+### from @vandekerckhove_hierarchical_2011-2
+
+Bayesian hierarchical modelling is useful in cognitive modelling because...
+
+- allows modelling individual differences directly, traditional cognitive models are often fit separately per participant
+Hierarchical models instead treat individuals as samples from a population and estimate both individual-level and group-level parameters simultaneously
+--> enables direct inference about population variability and more principled handling of inter individual differences
+
+- integrates experimental and correlational approaches, thereby bridging between experimental psychology (process models) and psychometrics (individual differences)
+--> results in models that explain both cognitive processes and variability between people aka a unified framework ("cognitive psychometrics")
+
+- enables analysis when there is little data on the individual level; when there are not many trials per participant the standard methods fail because the parameters cannot be reliably estimated per person --> hierarchical models pool information across participants and can therefore estimate even with few trials per individual
+
+- provides more stable and reliable parameter estimates by combining data across individuals --> less noisy than fitting each participant separately (e.g., population-level diffusion parameters can be estimated more reliably than with individual fits)
+
+- allows modelling of complex data structures because one can simultaneously model participants, items/stimuli, trials and conditions, supporting random effects (e.g., variability across people or items) and nested (or crossed) structures
+
+- allows selective parameter sharing and constraints, e.g., some parameters can vary across individuals and other can be constrained to be the same for each individuals, avoiding overly complex models with too many free parameters
+
+- enables explanation (not just description) of variability and differences --> explains them using predictors, e.g., drift rate can be modelled as a function of age, stimulus properties, and experimental manipulations
+
+- allows inclusion of both observed and latent predictors, which can include predictors (e.g., stimulus intensity, age) and latent variables (e.g., strategies, cognitive states), for example: mixture models can detect "hidden" subgroups of participants
+
+- supports interpretation of cognitive processes by using process models (e.g., diffusion model) at the measurement level --> the parameters have psychological meaning (e.g., drift rate = information processing speed) --> therefore the inference is about cognitive mechanisms
+
+- allows simultaneous modelling of multiple sources of variability --> it can model trial-to-trial variability, individual differences, condition effects, and population-level distributions, for example the diffusion model parameters are varying across trials (noise), individuals (individual differences), and conditions (experimental manipulations)
+
+- bayesian modelling make hierarchical models computationally feasible where classical methods would not be able to (e.g., estimation in high-dimensional parameter spaces) --> with bayesian its easier to handle complex hierarchical structures and they allow estimation via posterior distributions
+
+- provides intuitive probabilistic inference, it outputs a posterior distributions of parameters and enables direct probability statements (e.g., probability an effect $> 0$)
+
+- allows conclusions about single participants AND on the population-level (inferences about population distributions of cognitive parameters), e.g., the distribution of decision thresholds across participants
+
+- improves model fit and explanatory power by capturing more variance in data and accounting for unexplained variability (e.g., adding hierarchical structure and predictors reduces residual variance in drift rates)
+
+
+
+
+\newpage
+
+# References
+
+```{r create references, echo=FALSE}
+r_refs(file = "EZ_Paper.bib")
+```
+
+# Supplement 
+
+## Bias formulas 
+The mean and variance of the correct decision times are (ref!! @grasman2009mean)
+$$
+M_{ci} = \tau_i + \frac{1}{\nu_i}\Big[\alpha_i \coth(\nu_i\alpha_i) - \beta_i \coth(\nu_i\beta_i)\Big],
+$$
+
+$$
+\Sigma_{ci} = \frac{1}{\nu_i^2}\Big[\alpha_i^2 \,\text{csch}^2(\nu_i\alpha_i) - \beta_i^2 \,\text{csch}^2(\nu_i\beta_i)\Big] + \frac{1}{\nu_i^3}\Big[\alpha_i \coth(\nu_i\alpha_i) - \beta_i \coth(\nu_i\beta_i)\Big].
+$$
+
+## Simulation Study of Parameter Recovery (first simulation)
+
+The goal of this section is to showcase how to apply the hierarchical Bayesian EZ DDM. We first specify and justify the prior distributions for both the model without and the model with experimental conditions we implemented in the last section. Then, we evaluate whether the models are able to recover known parameter values through a parameter recovery study, where data are simulated from known parameters and the model is fitted to check whether the estimates return to the true values. Finally, we provide show how the model can be applied to empirical data.
+
+To evaluate whether the model can reliably recover the parameters it is applied to, we conducted a parameter recovery study. The data are simulated from known true parameter values, the model is then fitted to the simulated data, and the resulting posterior estimates are compared to the true values. Good recovery means that the posterior means are close to the true values and provides evidence that the model is identified and that the priors and likelihood provide sufficient information to estimate the parameters from data.
+
+### Prior specification
+
+Priors in Bayesian models encode beliefs about plausible parameter values before observing data. We use weakly informative priors [@gelman2017prior], that means these are priors that rule out implausible values and constrain the parameter space to a reasonable range, but remain broad enough not to dominate the likelihood when data are informative. The prior choices are based on typical parameter ranges reported in the literature [@wagenmakers2007ez; @ratcliff2015modeling; @chavez2025ez].
+
+#### Model without conditions
+
+The mean drift rate $\mu^{(\nu)}$ is given a normal prior that is centered at zero with a standard deviation of $0.5$:
+
+$$\mu^{(\nu)} \sim \mathcal{N}(0.0,\ 0.5^2)$$
+
+This prior is symmetric and allows drift rates to be positive or negative, reflecting no a priori assumption about the direction of evidence accumulation. A standard deviation of $0.5$ is weakly informative, values beyond $\pm 1$ are possible but increasingly unlikely, which is consistent with typical drift rate magnitudes reported in the literature.
+
+The mean boundary separation $\mu^{(\alpha)}$ is given a truncated normal prior that is centered at $1.5$ with a standard deviation of $0.2$, truncated with a lower bound at $0.1$:
+
+$$\mu^{(\alpha)} \sim \mathcal{N}_{(0.1,\,\infty)}(1.5,\ 0.2^2)$$
+
+Centering at $1.5$ reflects a typical boundary separation in response-time experiments [@wagenmakers2007ez]. The lower truncation at $0.1$ enforces the physical constraint that boundary separation must be positive. The relatively tight standard deviation of $0.2$ reflects that boundary separation values in most tasks fall in a range of roughly $0.5$–$3.0$.
+
+The mean of non-decision time $\mu^{(\tau)}$ is given a truncated normal prior which is centered at $0.3$ seconds with a standard deviation of $0.6$, with a lower bound at $0.05$ seconds:
+
+$$\mu^{(\tau)} \sim \mathcal{N}_{(0.05,\,\infty)}(0.3,\ 0.6^2)$$
+
+Non-decision time represents the time needed for perceptual encoding and motor execution, which typically falls between $0.1$ and $0.5$ seconds [@ratcliff2015modeling] and is therefore centered at $0.3$ seconds. The wider standard deviation of $0.6$ reflects great uncertainty, as non-decision time is known as the DDM parameter that is the hardest to guess (*ref*). The lower bound at $0.05$ seconds reflects a minimum plausible duration of sensory and motor processes.
+
+The group-level standard deviations capture between-person variability in each parameter after accounting for predictors. They are each given truncated normal priors:
+
+$$\sigma_\alpha \sim \mathcal{N}_{(0.1,\,0.8)}(0.25,\ 0.1^2), \quad \sigma_\nu \sim \mathcal{N}_{(0,\,\infty)}(0.3,\ 0.1^2), \quad \sigma_\tau \sim \mathcal{N}_{(0.05,\,0.6)}(0.15,\ 0.1^2)$$
+
+Individual boundary separation values $\alpha_{ik}$ are bounded between $0.1$ and $3.0$. The lower bound of $0.1$ enforces again that boundary separation must be positive, as a zero or negative threshold would makethe decision process undefined. The upper bound of $3.0$ reflects that boundary 
+separation values above this threshold are rarely observed in empirical data, very high values would imply extreme response caution, resulting in implausibly slow response times. Individual drift rate values $\nu_{ik}$ are left unconstrained, allowing both positive and negative drift rates. 
+In practice, drift rates in EZ DDM studies typically fall within $[-3, 3]$, and this range is already implicitly enforced through the hierarchical prior structure. Individual non-decision time values $\tau_{ik}$ are bounded below at $0.05$ seconds, reflecting again the minimum time required for perceptual encoding and motor execution. No upper bound is imposed on $\tau_{ik}$, as non-decision times can vary substantially across participants and tasks (although values above approximately $1$ second would be unusual in most experimental paradigms). 
+
+The standard deviation $\sigma_\alpha$ is bounded between $0.1$ and $0.8$. The lower bound ensures a minimum between-person variability, while the upper bound of $0.8$ was chosen because a standard deviation larger than roughly one quarter of the individual parameter range ($3.0 - 0.1 = 2.9$) would place a lot of prior mass on individual estimates near the boundaries, which is implausible. Similarly, $\sigma_\tau$ is bounded between $0.05$ and $0.6$. The lower bound matches the lower truncation of $\tau_{ik}$ , and the upper bound of $0.6$ prevents between-person variability from becoming so large that many individual $\tau_{ik}$ estimates are pushed towards the lower boundary of $0.05$. For drift rate, $\sigma_\nu$ only had a lower bound at $0$, and no upper bound, reflecting that individual variability in processing efficiency is allowed to be large. Nonetheless, the prior mean of $0.3$ with standard deviation $0.1$ concentrates most prior mass on moderate variability, which is consistent with estimates of between-person variability in DDM parameters [@vandekerckhove_hierarchical_2011-2].
+
+
+The covariate effect on drift rate $\beta_1^{(\nu)}$ is given a standard normal prior:
+
+$$\beta_1^{(\nu)} \sim \mathcal{N}(0,\ 1^2)$$
+
+This prior is centered at zero (i.e., no effect by default) but wide enough to accommodate moderate or even large covariate effects on the drift rate.
+
+
+#### Model with conditions
+
+For the model with experimental conditions, the priors on the group-level means and the group-level standard deviations remain the same as described above. The added condition effects receive the following priors:
+
+$$\beta_2^{(\nu)} \sim \mathcal{N}(0,\ 1.00^2), \quad \beta^{(\alpha)} \sim \mathcal{N}(0,\ 0.50^2), \quad \beta^{(\tau)} \sim \mathcal{N}(0,\ 0.05^2)$$
+
+All condition effects are centered at zero, which is a default expectation of no condition effect. The prior widths reflect the theoretical expectations about the magnitude of a condition effect on each parameter. The prior on $\beta_2^{(\nu)}$ is broad, as this reflects that drift rate is sensitive to stimulus properties and may shift substantially between conditions. The prior on $\beta^{(\alpha)}$ is half as wide as the one on  $\beta_2^{(\nu)}$, this moderately wide prior reflects that response caution may shift between conditions but it is not as likely as for the dirft rate. For example, participants may adopt a more cautious strategy in harder conditions [@dutilh2012testing]. The prior on $\beta^{(\tau)}$ is relatively because, as mentioned above, non-decision time reflects perceptual encoding and motor execution processes, and those are not expected to change substantially across task conditions.
+
+### Design
+
+We varied the number of participants ($I \in \{20, 60, 150\}$) and the number of trials per participant per condition ($J \in \{20, 60, 150\}$), which made up a $3 \times 3$ design. For each combination, we ran $50$ simulations. The data were generated from the true parameter values. Each dataset was fitted using the Stan model described in the Implementation section, with convergence monitored by checking $\hat{R}$. Fits with any  $\hat{R}$ exceeding $1.05$ were refitted with more iterations and a higher acceptance rate (`adapt_delta = 0.95`). Fits that still did not converge after the second attempt were excluded from the results. X simulations (X %) were excluded in total. 
+
+### Results?? 
+
+\begingroup
+\setlength{\parindent}{-0.5in}
+\setlength{\leftskip}{0.5in}
+
+<div id = "refs"></div>
+\endgroup
+
