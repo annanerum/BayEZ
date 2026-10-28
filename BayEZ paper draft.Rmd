@@ -314,11 +314,19 @@ p
 
 <!-- The model has since become a measurement tool [@vandekerckhove_crossed_2010; @vandekerckhove_hierarchical_2011-1] and is widely used [see, e.g., @myers_practical_2022; @yang2023diffusion; @ratcliff2015modeling]. -->
 
-The DDM is widely used, for example in decision-making [@krajbich2010visual; @ratcliff2008diffusion], memory [@starns2012evaluating; @ratcliff2004diffusion], cognitive control [@white2011diffusion; @ulrich2015automatic; @schmiedek2007individual], and even in creativity research [@donzallaz2023creative]. More recently, the DDM has also been applied as a measurement tool  [@vandekerckhove_crossed_2010; @vandekerckhove_hierarchical_2011-1], for example in the validation of clinical diagnoses [@weigard2021task; @sripada2021impaired; @pe2013diffusion]. Given the wide applicability of the DDM, its usability is crucial. That is, many researchers should be able to estimate DDM model parameters in an efficient way. This has always been the DDM's weak spot. For example, @luken2025parameter reported identifiable issues, @boehm2018estimating highlight the model's computational complexity and technical difficulties with model fitting, and @henrich2024seven note long computing time. As a result, there have been many efforts to make the model less computationally intensive, either through improved estimation techniques [e.g., @navarro2009fast; @stevenson2026bayesian], through reduced model complexity [@wagenmakers2007ez], or through efficient approximation techniques [@brown2006evaluating].
+The DDM is widely used, for example in decision-making [@krajbich2010visual; @ratcliff2008diffusion], memory [@starns2012evaluating; @ratcliff2004diffusion], cognitive control [@white2011diffusion; @ulrich2015automatic; @schmiedek2007individual], and even in creativity research [@donzallaz2023creative]. More recently, the DDM has also been applied as a measurement tool  [@vandekerckhove_crossed_2010; @vandekerckhove_hierarchical_2011-1], for example in the validation of clinical diagnoses [@weigard2021task; @sripada2021impaired; @pe2013diffusion]. Given the wide applicability of the DDM, its usability is crucial. That is, many researchers should be able to estimate DDM model parameters in an efficient way. This has always been the DDM's weak spot. For example, @luken2025parameter reported identifiability issues, @boehm2018estimating highlight the model's computational complexity and technical difficulties with model fitting, and @henrich2024seven note long computing time. As a result, there have been many efforts to make the model less computationally intensive, either through improved estimation techniques [e.g., @navarro2009fast; @stevenson2026bayesian], through reduced model complexity [@wagenmakers2007ez], or through efficient approximation techniques [@brown2006evaluating].
 
-In this paper, we assess the effects of reduced model complexity using different Bayesian hierarchical implementations of the DDM. For this assessment, we rely on the so-called *EZ diffusion model* [@wagenmakers2007ez, EZ-DDM]. Both the full DDM and the EZ-DDM were recently implemented as Bayesian models [@chavez2025ez; @henrich2024seven]. These advances allow us a fine-grained assessment of the reduction of the number of parameters from the seven parameters of the full DDM to three parameters of the EZ-DDM (drift rate, boundary separation, and non-decision time). Crucially, this can be done without any differences in the software implementation. In the following, we first present the EZ-DDM and discuss the advantages of hierarchical cognitive modeling. We then introduce the Bayesian hierarchical EZ-DDM developed by @chavez2025ez, its implementation in the probabilistic programming language Stan, and an application of this model to real data. Finally, we compare this new implementation with similar Bayesian hierarchical implementations of (1.) an extended EZ-DDM including the bias parameter, (2.) a five-parameter DDM including variability in drift rate, and (3.) the full seven-parameter DDM.
+In this paper, we assess the effects of reduced model complexity using different Bayesian hierarchical implementations of the DDM. For this assessment, we rely on the so-called *EZ diffusion model* [@wagenmakers2007ez, EZ-DDM]. Both the full DDM and the EZ-DDM were recently implemented as Bayesian models [@chavez2025ez; @henrich2024seven]. These advances allow us a fine-grained assessment of the reduction of the number of parameters from the seven parameters of the full DDM to three parameters of the EZ-DDM (drift rate, boundary separation, and non-decision time). Crucially, this can be done without any differences in the software implementation. In the following, we first discuss the advantages of hierarchical cognitive modeling. We then introduce the EZ-DDM including its Bayesian hierarchical version developed by @chavez2025ez. Subsequently, we introduce a number of intermediate models between the EZ-DDM and the full hierarchical DDM: (1.) an extended EZ-DDM including the bias parameter, (2.) a five-parameter DDM including variability in drift rate, and (3.) the seven-parameter DDM with only some parameters implemented hierarchically. We then apply these model to real data from @grabowska2025individual, and compare all five models using simulation. Finally, we discuss the impact of the number of model parameters on the complexity of these models, including the flexibility of predictions for different data patterns.
 
-## EZ Diffusion Model
+# Hierarchical Drift Diffusion Models
+
+Cognitive models have been commonly applied separately to each participant's data. This approach, however, often leads to an overestimation of individual differences because noise variability in individual data patterns is interpreted as true individual variability [@rouder2017hierarchical; @boehm2018importance]. ...
+
+Hierarchical Bayesian models extend standard cognitive models by adding a second level that explains how the underlying psychological parameters are generated and vary across individuals [@lee_how_2011-4; @vandekerckhove_hierarchical_2011-2]. Rather than treating parameters as fixed quantities estimated separately per participant, they are modelled as samples drawn from a population-level distribution, enabling simultaneous inference about individual- and group-level properties [@lee_how_2011-4]. This is particularly useful when data per participant are sparse, which often leads to non-hierarchical models failing to produce reliable estimates. Hierarchical models pool information across individuals and recover parameter estimates that would otherwise be not recoverable [@vandekerckhove_hierarchical_2011-2]. Because the parameters retain their psychological meaning, inference remains grounded in cognitive processes while simultaneously capturing how those processes vary between people. This has been described as a form of "cognitive psychometrics": a unified framework that explains both the mechanisms underlying behaviour and the individual differences in those mechanisms [@vandekerckhove_hierarchical_2011-2]. Variability is not treated as noise but as a theoretically meaningful quantity (??) that needs to be modelled. For instance, drift rate can be influenced by variables such as age, stimulus properties, or experimental condition [@vandekerckhove_hierarchical_2011-2].
+
+A hierarchical structure also supports parameters to be vary selectively, e.g., some parameters can be treated as fixed across participants, and others as varying freely, which avoids overly complex models with too many free parameters [@vandekerckhove_hierarchical_2011-2].Furthermore, hierarchical models allow different cognitive processes to contribute to the same dataset, which means the core model can remain relatively simple, while one can still account for additional variability through separate processes, leading to more accurate and theoretically meaningful explanations [@lee_how_2011-4]. 
+
+## The EZ Diffusion Model
 
 The EZ-DDM was developed by @wagenmakers2007ez, which estimates three key parameters from the DDM (non-decision time, drift rate, and boundary separation), assuming no a priori bias toward either response option (i.e., $\beta = \frac{\alpha}{2}$), from **three summary statistics**: The mean ($MRT$) and variance ($VRT$) of the correct RTs and the accuracy ($Percentage$ $correct$ $(Pc)$). The three observed summary statistics are converted into the parameters using **closed-form equations**. Hence, the model is not fit directly on the trial-level data.
 
@@ -328,19 +336,9 @@ The EZ-DDM also requires no error RT distribution. DDM fitting procedures depend
 
 However, the EZ DDM assumes no across-trial variability in parameters and is less flexible than the full DDM [@ratcliff2008ez]. When the model's assumptions are violated and there is variability in drift rate, starting point, or non-decision time in the data, recovered parameter values tend to over- or underestimate their true values [@ratcliff2008diffusion]. 
 
-
-## Hierarchical Cognitive Modeling
-
 While the EZ-DDM provides an accessible tool for parameter estimation, applying it independently to each participant ignores the structure that individual differences impose. A hierarchical framework addresses this limitation by modelling participants jointly, which enables inference at the individual and group level simultaneously (ref??).
 
-Hierarchical Bayesian models extend standard cognitive models by adding a second level that explains how the underlying psychological parameters are generated and vary across individuals [@lee_how_2011-4; @vandekerckhove_hierarchical_2011-2]. Rather than treating parameters as fixed quantities estimated separately per participant, they are modelled as samples drawn from a population-level distribution, enabling simultaneous inference about individual- and group-level properties [@lee_how_2011-4]. This is particularly useful when data per participant are sparse, which often leads to non-hierarchical models failing to produce reliable estimates. Hierarchical models pool information across individuals and recover parameter estimates that would otherwise be not recoverable [@vandekerckhove_hierarchical_2011-2]. Because the parameters retain their psychological meaning, inference remains grounded in cognitive processes while simultaneously capturing how those processes vary between people. This has been described as a form of "cognitive psychometrics": a unified framework that explains both the mechanisms underlying behaviour and the individual differences in those mechanisms [@vandekerckhove_hierarchical_2011-2]. Variability is not treated as noise but as a theoretically meaningful quantity (??) that needs to be modelled. For instance, drift rate can be influenced by variables such as age, stimulus properties, or experimental condition [@vandekerckhove_hierarchical_2011-2].
-
-A hierarchical structure also supports parameters to be vary selectively, e.g., some parameters can be treated as fixed across participants, and others as verying freely, which avoids overly complex models with too many free parameters [@vandekerckhove_hierarchical_2011-2].Furthermore, hierarchical models allow different cognitive processes to contribute to the same dataset, which means the core model can remain relatively simple, while one can still account for additional variability through separate processes, leading to more accurate and theoretically meaningful explanations [@lee_how_2011-4]. 
-
 The hierarchical extension of the EZ diffusion model has been implemented by @chavez2025ez and offers a principled way to handle individual differences, producing more stable estimates and deeper theoretical conclusions than fitting the model independently to each participant [@chavez2025ez; @lee_how_2011-4; @vandekerckhove_hierarchical_2011-2]. 
-
-# Hierarchical EZ Diffusion Model
- 
 
 Following @chavez2025ez, $\mathbf{Y}_{ij}$ denotes the vector of the choice and response time of the $i$th person on the $j$th trial. $\mathbf{Y}_{ij}$ is modeled using a Wiener distribution,
 
@@ -382,25 +380,10 @@ When $C_i$ is sufficiently large ($>30$), the sampling distribution of the varia
 $$
 VRT_i \sim \text{Normal} \ \Bigg( \Sigma_{ci},\ 2 \frac{{\Sigma_{ci}} ^2}{C_i-1} \Bigg)
 $$
-The EZ DDM fixes the starting point at the midpoint between the two boundaries, $\beta_i = \frac{\alpha_i}{2}$ [@wagenmakers2007ez]. However, an a priori bias is common in practice (ref??). Participants may favour one response, if, for example, one of the two stimuli appears more often, or when one response is rewarded more strongly. If such a bias is present but not estimated by the model, its effect is absorbed by the remaining parameters and can distort estimates of those parameters.
-
-When we model $\beta_i$ as a free parameter, the probability of a correct response and the response time depend on where the process starts. With the diffusion coefficient fixed at $s = 1$, the probability of a correct response is
-$$
-\pi_{ci} = \frac{1 - \exp(-2\nu_i\beta_i)}{1 - \exp(-2\nu_i\alpha_i)},
-$$
-the formulas for the mean and variance of the RTs of correct responses can be found in the supplement. 
 
 
-Because a process that terminates at the lower boundary is equivalent to one that starts at $\alpha_i - \beta_i$ and terminates at the upper boundary, the equations for $M_{i}$ and $\Sigma_{i}$ replace $\beta_i$ by $\alpha_i - \beta_i$. A starting point closer to the correct boundary makes correct responses faster than incorrect responses, and a starting point closer to the error boundary makes incorrect responses faster than correct responses. Estimating $\beta_i$ therefore requires the RTs of incorrect trials for the estimation, such as the mean error RT,
-$$
-MRT_i \sim \text{Normal}\Bigg(M_{i},\ \frac{\Sigma_{i}}{J - C_i}\Bigg),
-$$
-and, if enough incorrect trials are available, the error RT variance ($VRT_i$; see EZ2 extension [@grasman2009mean].
 
-Adding those RTs reintroduces part of the problem that motivated the EZ model, namely the dependence on error trials, which are scarce in high-accuracy tasks. However, the hierarchical framework helps here: Participants with few errors are influenced more by the population distribution of $\beta$, so their bias estimates are shrunk toward the group mean instead of being unidentified. This is called regression to the mean (ref???). 
-
-
-# Implementation 
+### Current Implementation 
 
 
 The hierarchical EZ-DDM described above captures individual differences in cognitive parameters through population-level distributions, but does not yet account for systematic variation due to experimental conditions or participant-level covariates. We extended the model to incorporate both sources of variation by using design matrices. 
@@ -464,8 +447,8 @@ $$\mu_{ik}^{(\tau)} = \mu^{(\tau)} + x_{ik2}\gamma^{(\tau)}$$
 Here, the participant-level covariate and the random slope are omitted.
 
 
-
-## Implementation in Stan
+--> APPENDIX
+### Implementation in Stan
 
 We implemented a version of the hierarchical EZ diffusion model by @chavez2025ez, extended it to designs with several within-subject conditions, and relaxed some of the parameter constraints. In many experimental paradigms, participants perform the same task under multiple experimental conditions (e.g., control vs. manipulation), and it may therefore be interesting how drift rate, boundary separation, and non-decision time change across conditions. We therefore describe a version of the model with $K$ conditions, indexed by $k = 1, \ldots, K$, in which each participant $i$ has a separate set of latent parameters ($\alpha_{ik}$, $\nu_{ik}$, and $\tau_{ik}$) for each condition $k$.
 
@@ -578,11 +561,41 @@ model {
 
 
 
+
+## Extended 4-Parameter EZ-DDM
+
+- Previous four-parameter DDM solutions (Singmann references) unsing the Wiener distribution. Here, we opt for a new implementation using summary statistics for estimation. In principle, this could improve robustness and estimation efficiency.
+
+The EZ DDM fixes the starting point at the midpoint between the two boundaries, $\beta_i = \frac{\alpha_i}{2}$ [@wagenmakers2007ez]. However, an a priori bias is common in practice (ref??). Participants may favour one response, if, for example, one of the two stimuli appears more often, or when one response is rewarded more strongly. If such a bias is present but not estimated by the model, its effect is absorbed by the remaining parameters and can distort estimates of those parameters.
+
+When we model $\beta_i$ as a free parameter, the probability of a correct response and the response time depend on where the process starts. With the diffusion coefficient fixed at $s = 1$, the probability of a correct response is
+$$
+\pi_{ci} = \frac{1 - \exp(-2\nu_i\beta_i)}{1 - \exp(-2\nu_i\alpha_i)},
+$$
+the formulas for the mean and variance of the RTs of correct responses can be found in the supplement. 
+
+
+Because a process that terminates at the lower boundary is equivalent to one that starts at $\alpha_i - \beta_i$ and terminates at the upper boundary, the equations for $M_{i}$ and $\Sigma_{i}$ replace $\beta_i$ by $\alpha_i - \beta_i$. A starting point closer to the correct boundary makes correct responses faster than incorrect responses, and a starting point closer to the error boundary makes incorrect responses faster than correct responses. Estimating $\beta_i$ therefore requires the RTs of incorrect trials for the estimation, such as the mean error RT,
+$$
+MRT_i \sim \text{Normal}\Bigg(M_{i},\ \frac{\Sigma_{i}}{J - C_i}\Bigg),
+$$
+and, if enough incorrect trials are available, the error RT variance ($VRT_i$; see EZ2 extension [@grasman2009mean].
+
+Adding those RTs reintroduces part of the problem that motivated the EZ model, namely the dependence on error trials, which are scarce in high-accuracy tasks. However, the hierarchical framework helps here: Participants with few errors are influenced more by the population distribution of $\beta$, so their bias estimates are shrunk toward the group mean instead of being unidentified. This is called regression to the mean (ref???). 
+
+
+## 5-parameter DDM
+
+## 7-parameter DDM
+
+
+
+
 # Application to Real Data
 
 To illustrate how the hierarchical Bayesian EZ diffusion model can be applied in practice, we re-analysed the behavioural data of @grabowska2025individual, who studied post-response adaptation in a speeded flanker task. @grabowska2025individual fitted a hierarchical four-parameter Wiener diffusion model (ref??) to the single-trial data and were interested in how the response on the preceding trial (correct vs. error) and the amplitude of the error- and correct-related negativity (ERN/CRN) relate to drift rate and boundary separation on the following trial. We used the same data and tried to use a similar effect structure, as far as the EZ DDM allowed it. 
 
-## Application Data
+## The Data Set
 
 The dataset consists of $I = 222$ participants who completed a speeded arrow flanker task with $70\%$ congruent and $30\%$ incongruent trials and a response window of $600$ ms [for details, see @grabowska2025individual]. The data are available on OSF (https://osf.io/jszyh/). We applied the trial selection of @grabowska2025individual, which follows @mattes2022: Only trials that were part of a correct–correct–X–P sequence were analysed, where X is the reference trial that provides the response type (correct or error) and P is the trial on which adaptation is observed. Trials with RTs above $1000$ ms and trials with a log-transformed RT outside the participant mean $\pm 3$ standard deviations were excluded.
 
@@ -631,6 +644,7 @@ $$
 There were two types of standard deviations. The standard deviations $\sigma_\nu$, $\sigma_\alpha$, and $\sigma_\tau$ described how much the cell-level parameters of a person deviate from that person's predicted value. The standard deviations of the random effects ($\sigma_{\nu,c}$, $\sigma_{\nu,r}$, $\sigma_{\nu,cr}$, $\sigma_{\alpha,0}$, $\sigma_{\tau,0}$) described individual differences between participants.
 
 
+--> Appendix
 ### Implementation in Stan
 
 In the `data`, the design matrices followed the same logic as before: For our regression model, `X_nu` had four columns (intercept, condition, response type, interaction), `X_alpha` had three columns (intercept, response type, condition), and `X_tau` had only the intercept. The prior parameters were passed as data, with the means in the first row and the standard deviations (or the shape and rate of a gamma prior) in the second row. This way, the priors can be changed in R without recompiling the model.
@@ -800,6 +814,7 @@ model {
 }
 ```
 
+
 ## Priors
 
 We used the priors of @grabowska2025individual so that differences in the results could be attributed to the model and not the priors. For the population-level effects on drift rate, we used
@@ -861,8 +876,8 @@ We compared the posterior estimates of the hierarchical EZ DDM with the estimate
 
 ```{r app-forest-effects, echo = FALSE, message = FALSE, warning = FALSE, fig.cap = "Population-level estimates of the hierarchical EZ DDM (filled points, posterior mean and 95\\% credible interval) and of the drift diffusion model used by Grabowska et al. (2025; open points, posterior mean and 95\\% highest density interval). Condition: congruent $= 1$, incongruent $= -1$. Response type of the preceding trial: correct $= 1$, error $= -1$", fig.width = 6.5, fig.height = 6, fig.pos = "H"}
 library(ggplot2)
-# est <- read.csv(file.path("working model vs full model", "output_krakow_final", "krakow_estimates.csv"))
-est <- read.csv(file.path("output_krakow_final", "krakow_estimates.csv"))
+est <- read.csv(file.path("working model vs full model", "output_krakow_final", "krakow_estimates.csv"))
+# est <- read.csv(file.path("output_krakow_final", "krakow_estimates.csv"))
 rownames(est) <- est$param
 
 grab_eff <- data.frame(
@@ -969,7 +984,7 @@ p_sds
 <!-- move this to the Supplement section??-->
 
 ```{r app-estimates, echo = FALSE, results = "asis"}
-est <- read.csv(file.path("output_krakow_final", "krakow_estimates.csv"))
+# est <- read.csv(file.path("output_krakow_final", "krakow_estimates.csv"))
 
 grab <- data.frame(
   param = c("mu_nu", "b_nu_condition", "b_nu_resp_type", "b_nu_interaction",
@@ -1034,9 +1049,6 @@ papaja::apa_table(
 ```
 
 
-### Limitations
-
-
 
 # 3, 4, 5 or 7 Parameters? Comparison to the DDM 
 
@@ -1048,15 +1060,18 @@ In addition, there are new (hierarchical Bayesian) estimation methods for the fu
 
 Therefore, we aimed to systematically assess the estimation accuracy of different versions of the diffusion model: From the full seven-parameter version, over a reduced five-parameter version, to the two EZ DDM implementations with four and three parameters, respectively. In the following, we provide an overview over the models, then go over the simulation setup we employed, and finally provide the results.
 
-## Models
-
 ## Simulation Setup
 
 ## Simulation Results
 
+# Number of Parameters and Model Complexity
+
+## Parameter Tradeoffs and Interpretability
+
+## Model Predictions for Data
 
 \newpage
-# Discussion
+# Conclusion
 
 Is it the EZ parameterization or the restructuring of the data?
 
