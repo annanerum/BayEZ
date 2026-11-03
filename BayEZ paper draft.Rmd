@@ -771,7 +771,7 @@ papaja::apa_table(
 
 
 
-# 3, 4, 5 or 7 Parameters? Comparison to the DDM 
+# 3, 4, 5 or 6/7 Parameters? 
 
 Is it just EZ or also good? Previously shown that the EZ model is surprisingly accurate when recovering parameters from the full DDM. For non-decision time, it may even be a bit better than common estimation methods of the full DDM. 
 
