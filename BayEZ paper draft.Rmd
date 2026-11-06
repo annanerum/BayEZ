@@ -320,61 +320,31 @@ In this paper, we assess the effects of reduced model complexity using different
 
 # Hierarchical Drift Diffusion Models
 
-Cognitive models have been commonly applied separately to each participant's data. This approach, however, often leads to an overestimation of individual differences because noise variability in individual data patterns is interpreted as true individual variability [@rouder2017hierarchical; @boehm2018importance]. ...
+Cognitive models have been commonly applied separately to each participant's data. This approach, however, often leads to an overestimation of individual differences because noise variability in individual data patterns is interpreted as true individual variability [@rouder2017hierarchical; @boehm2018importance]. 
 
-Hierarchical Bayesian models extend standard cognitive models by adding a second level that explains how the underlying psychological parameters are generated and vary across individuals [@lee_how_2011-4; @vandekerckhove_hierarchical_2011-2]. Rather than treating parameters as fixed quantities estimated separately per participant, they are modelled as samples drawn from a population-level distribution, enabling simultaneous inference about individual- and group-level properties [@lee_how_2011-4]. This is particularly useful when data per participant are sparse, which often leads to non-hierarchical models failing to produce reliable estimates. Hierarchical models pool information across individuals and recover parameter estimates that would otherwise be not recoverable [@vandekerckhove_hierarchical_2011-2]. Because the parameters retain their psychological meaning, inference remains grounded in cognitive processes while simultaneously capturing how those processes vary between people. This has been described as a form of "cognitive psychometrics": a unified framework that explains both the mechanisms underlying behaviour and the individual differences in those mechanisms [@vandekerckhove_hierarchical_2011-2]. Variability is not treated as noise but as a theoretically meaningful quantity (??) that needs to be modelled. For instance, drift rate can be influenced by variables such as age, stimulus properties, or experimental condition [@vandekerckhove_hierarchical_2011-2].
+Hierarchical models extend standard cognitive models by adding a second level that explains how the underlying psychological parameters are generated and vary across individuals [@lee_how_2011-4; @vandekerckhove_hierarchical_2011-2]. Parameters are drawn from a population-level distribution, enabling simultaneous inference about individual- and group-level properties [@lee_how_2011-4]. This is particularly useful when data per participant are sparse, which often leads to non-hierarchical models failing to produce reliable estimates [@vandekerckhove_hierarchical_2011-2]. A hierarchical structure also supports parameters to be vary selectively, e.g., some parameters can be treated as fixed across participants, and others as varying freely, which avoids overly complex models with too many free parameters. 
 
-A hierarchical structure also supports parameters to be vary selectively, e.g., some parameters can be treated as fixed across participants, and others as varying freely, which avoids overly complex models with too many free parameters [@vandekerckhove_hierarchical_2011-2].Furthermore, hierarchical models allow different cognitive processes to contribute to the same dataset, which means the core model can remain relatively simple, while one can still account for additional variability through separate processes, leading to more accurate and theoretically meaningful explanations [@lee_how_2011-4]. 
+These advantages of hierarchical modelling have motivated researchers to develop hierarchical implementation of many cognitive models (viele refs! mpt models (julia chat), rouder and lu 2005, vanderkherkove et al 2011 diffusion models for two choice response times). One of the major means to drive these implementations is Bayesian statistics (Lee how 2011, rouder & lu 2005 --> frequentist schwieriger). Bayesian analysis allows for the tractability of more complex cognitive models. 
 
 ## The EZ Diffusion Model
 
-The EZ-DDM was developed by @wagenmakers2007ez, which estimates three key parameters from the DDM (non-decision time, drift rate, and boundary separation), assuming no a priori bias toward either response option (i.e., $\beta = \frac{\alpha}{2}$), from **three summary statistics**: The mean ($MRT$) and variance ($VRT$) of the correct RTs and the accuracy ($Percentage$ $correct$ $(Pc)$). The three observed summary statistics are converted into the parameters using **closed-form equations**. Hence, the model is not fit directly on the trial-level data.
+The EZ-DDM was originally developed by @wagenmakers2007ez as a frequentist non-hierarchical model, which estimates three key parameters from the DDM (non-decision time, drift rate, and boundary separation). It assumes no a priori bias toward either response option (i.e., $\beta = \frac{\alpha}{2}$) and no trial-to-trial variability in non-decision time, drift rate and starting point. The three parameters of the EZ-DDM are computed from **three summary statistics**: The mean ($MRT$) and variance ($VRT$) of the correct RTs and the accuracy ($Percentage$ $correct$ $(Pc)$). 
 
-The EZ-DDM is said to work with low trial counts and low error rates. That means, it performs relatively well in situations with limited data. Traditional diffusion model fitting requires a sufficient number of both correct and error trials to reliably estimate parameters, especially the shape of RT distributions. However, in many experimental paradigms---particularly those with high accuracy---error trials are scarce [@wagenmakers2007ez, @vanravenzwaaij2017ez]. The EZ-DDM solves this limitation by relying only on the three summary statistics (mean RT, RT variance, and accuracy), making it suitable for small sample designs and high-accuracy tasks (e.g., easy perceptual decision tasks like the Stroop task). @wagenmakers2007ez report that the parameter estimates of the EZ-DDM remain reasonably stable even when error rates are very low, whereas full diffusion model fits can become unreliable or fail to converge.
+The major advantage of the EZ-DDM is its computational feasibility. The estimation process simply involves computing the three parameters per condition and participant. Additionally, the EZ-DDM estimates are surprisingly robust. @wagenmakers2007ez report that the parameter estimates of the EZ-DDM remain reasonably stable even when error rates are very low, whereas full diffusion model fits can become unreliable or fail to converge. Further, the EZ-DDM derives the parameter estimates from aggregated measures, reducing sensitivity to outliers in the RT data. 
 
-The EZ-DDM also requires no error RT distribution. DDM fitting procedures depend on the full distribution of response times for both correct and incorrect responses. This can be a problem because error RTs are often noisy, error trials may be too few to estimate distributions reliably, and preprocessing can disproportionately affect error trials. By not modelling RT distributions directly, the EZ-DDM eliminates this dependency. It derives the parameter estimates from aggregated measures, reducing sensitivity to outliers in the RT data and instability caused by too few error observations. It may also be accessible to a broader audience: The EZ-DDM may be easier to understand and implement for researchers that are unfamiliar with diffusion modelling, and it is very fast compared to the full DDM [@wagenmakers2007ez, @chavez2025ez].
-
-However, the EZ DDM assumes no across-trial variability in parameters and is less flexible than the full DDM [@ratcliff2008ez]. When the model's assumptions are violated and there is variability in drift rate, starting point, or non-decision time in the data, recovered parameter values tend to over- or underestimate their true values [@ratcliff2008diffusion]. 
-
-While the EZ-DDM provides an accessible tool for parameter estimation, applying it independently to each participant ignores the structure that individual differences impose. A hierarchical framework addresses this limitation by modelling participants jointly, which enables inference at the individual and group level simultaneously (ref??).
-
-The hierarchical extension of the EZ diffusion model has been implemented by @chavez2025ez and offers a principled way to handle individual differences, producing more stable estimates and deeper theoretical conclusions than fitting the model independently to each participant [@chavez2025ez; @lee_how_2011-4; @vandekerckhove_hierarchical_2011-2]. 
+Recently, a hierarchical extension of the EZ-DDM has been implemented by @chavez2025ez and offers a principled way to handle individual differences, producing more stable estimates than fitting the model independently to each participant [@chavez2025ez; @lee_how_2011-4; @vandekerckhove_hierarchical_2011-2]. 
 
 Following @chavez2025ez, $\mathbf{Y}_{ij}$ denotes the vector of the choice and response time of the $i$th person on the $j$th trial. $\mathbf{Y}_{ij}$ is modeled using a Wiener distribution,
 
 $$\mathbf{Y}_{ij} \sim \mbox{Wiener} \ (\alpha_i,\ \beta_i,\ \tau_i,\ \nu_i)$$
 
-where the parameters are a (participant-specific) drift rate $\nu_i$, a boundary separation $\alpha_i$, and a non-decision time $\tau_i$. The fourth parameter of the Wiener distribution, the bias parameter $\beta_i$, is fixed at $\frac{\alpha_i}{2}$, (i.e., no response bias; see @wagenmakers2007ez).
+where the parameters are a participant-specific drift rate $\nu_i$, a boundary separation $\alpha_i$, and a non-decision time $\tau_i$. The fourth parameter of the Wiener distribution, the bias parameter $\beta_i$, is fixed at $\frac{\alpha_i}{2}$, (i.e., no response bias; see @wagenmakers2007ez).
 
-
-The mean parameter of the RTs of correct responses $M_{ci}$ and the variance parameter of the RTs of correct responses $\Sigma_{ci}$ can be *computed from the three key DDM parameters* $\nu_{i}$, $\alpha_{i}$, $\tau_{i}$.
-
-Let $u_i = \exp(-\alpha_i \nu_i)$. Then, the mean and variance of the correct response times are:
+Instead of using the Wiender distribution as likelihood of the model, the EZ-DDM links the DDM üarameters to the data using the three summary statistics. The mean of the RTs of correct responses $MRT_i$, is approximated by a normal distribution:
 $$
-M_{ci} = \tau_i + \big( \frac{\alpha_i}{2\nu_i} \big) \big( \frac{u_i - 1}{u_i + 1} \big) 
+MRT_{ci} \sim \text{Normal} \ \Bigg(M_{ci},\ \frac{\Sigma_{ci}}{C_i} \Bigg),
 $$
-
-and 
-
-$$
-\Sigma_{ci} = \big( \frac{\alpha_i}{2{\nu_i}^3} \big) \Bigg( \frac{1 - 2 \alpha_i \nu_i u_i - {u_i}^2}{(u_i + 1)^2} \Bigg).
-$$
-
-
-The summary statistics (mean ($MRT$) and variance ($VRT$) of the correct RTs, and the accuracy ($Percentage$ $correct$ $(Pc)$)) are converted into the parameters using *closed-form equations*.
-These observed summary statistics that serve as the "data" consist of each person $i$'s number of correct trials ($C_i$), as well as the mean and variance of the correct RTs ($MRT_i$ and $VRT_i$). 
-
-For $J$ observations, the sampling distribution of the number of correct trials $C_i$ is:
-$$
-C_i \sim \text{Binomial} \ \big(\pi_{ci},\ J \big)
-$$
-Here, the probability of a correct response is 
-$$\pi_{ci} = \frac{1}{\exp(-\alpha_i \nu_i) + 1}$$. 
-
-Similarly, for $J$ observations, the sampling distribution of the mean correct RT, $MRT_i$, is approximated by a normal distribution:
-$$
-MRT_i \sim \text{Normal} \ \Bigg(M_{ci},\ \frac{\Sigma_{ci}}{C_i} \Bigg)
-$$
+where $M_{ci}$ denotes the mean parameter of the sampling distribution, $\Sigma_{ci}$ denotes the variance parameter of the response time distribution and $C_i$ denotes the number of correct trials. 
 
 When $C_i$ is sufficiently large ($>30$), the sampling distribution of the variance of the correct RTs, $VRT_i$, is also approximated by a normal distribution:
 $$
@@ -382,13 +352,95 @@ VRT_i \sim \text{Normal} \ \Bigg( \Sigma_{ci},\ 2 \frac{{\Sigma_{ci}} ^2}{C_i-1}
 $$
 
 
+The parameters of these two sampling distributions can be linked to the DDM parameters. 
 
-### Current Implementation 
+$M_{ci}$ is 
+$$
+M_{ci} = \tau_i + \big( \frac{\alpha_i}{2\nu_i} \big) \big( \frac{u_i - 1}{u_i + 1} \big), 
+$$
+where $u_i = \exp(-\alpha_i \nu_i)$. 
+
+The variance parameter of the RTs of correct responses $\Sigma_{ci}$ is
+$$
+\Sigma_{ci} = \big( \frac{\alpha_i}{2{\nu_i}^3} \big) \Bigg( \frac{1 - 2 \alpha_i \nu_i u_i - {u_i}^2}{(u_i + 1)^2} \Bigg).
+$$
+
+For $J$ observations, the sampling distribution of the number of correct trials $C_i$ is:
+$$
+C_i \sim \text{Binomial} \ \big(\pi_{ci},\ J \big)
+$$
+Here, the probability of a correct response is 
+
+$$\pi_{ci} = \frac{1}{\exp(-\alpha_i \nu_i) + 1}$$. 
 
 
-The hierarchical EZ-DDM described above captures individual differences in cognitive parameters through population-level distributions, but does not yet account for systematic variation due to experimental conditions or participant-level covariates. We extended the model to incorporate both sources of variation by using design matrices. 
 
-The idea is to model the parameter of each individual-level distribution as a linear combination of predictors. By this we can include experimental conditions, continuous participant-level covariates, or both in the model in a flexible way. Also, different parameters can be associated with different sets of predictors, reflecting theoretical assumptions about which factors are expected to drive which cognitive processes.
+## Extended 4-Parameter EZ-DDM
+
+The EZ-DDM fixes the starting point at the midpoint between the two boundaries, $\beta_i = \frac{\alpha_i}{2}$ [@wagenmakers2007ez]. However, an a priori bias is common in practice (ref??). Participants may favour one response, if, for example, one of the two stimuli appears more often, or when one response is rewarded more strongly. If such a bias is present but not estimated by the model, its effect is absorbed by the remaining parameters and can distort estimates of those parameters.
+
+Previously, four-parameter DDM solutions used the Wiener distribution and fixed the remaining parameters [e.g., @rey2025neither; @donzallaz2023creative]. Here, we opt for a new implementation using summary statistics for estimation (ref Nina).
+
+To model $\beta_i$ as a free parameter, the four DDM parameters are linked to four instead of three summary statistics. In addition to the mean response time of correct responses (equation number of the MRT), the mean response time of incorrect responses is
+$$
+MRT_{ei} \sim \text{Normal}\Bigg(M_{ei},\ \frac{\Sigma_{i}}{J - C_i}\Bigg).
+$$
+The variance of response times is then
+...
+
+Note that the variance of all response times is used for the four parameter version of the EZ-DDM, not just the variance of correct response times. 
+
+The sampling distribution of the number of correct responses remains the same as in equation --> link to Ci. 
+
+The probability of a correct response and the RT depend on where the process starts. The probability of a correct response is then
+$$
+\pi_{ci} = \frac{1 - \exp(-2\nu_i\beta_i)}{1 - \exp(-2\nu_i\alpha_i)},
+$$
+
+The mean of the correct response times is
+$$
+M_{ci} = \tau_i + \frac{1}{\nu_i}\Big[\alpha_i \coth(\nu_i\alpha_i) - \beta_i \coth(\nu_i\beta_i)\Big].
+$$
+The mean of the error response times is
+__Mei formula__
+
+
+The variance of the resoonse times is
+$$
+\Sigma_{i} = \frac{1}{\nu_i^2}\Big[\alpha_i^2 \,\text{csch}^2(\nu_i\alpha_i) - \beta_i^2 \,\text{csch}^2(\nu_i\beta_i)\Big] + \frac{1}{\nu_i^3}\Big[\alpha_i \coth(\nu_i\alpha_i) - \beta_i \coth(\nu_i\beta_i)\Big].
+$$
+
+
+
+## 5-, 6- and 7-parameter DDM
+
+Despite computation ease etc --> criticism ...
+However, the EZ DDM assumes no across-trial variability in parameters and is less flexible than the full DDM [@ratcliff2008ez]. When the model's assumptions are violated and there is variability in drift rate, starting point, or non-decision time in the data, recovered parameter values tend to over- or underestimate their true values [@ratcliff2008diffusion]. 
+--> neues ratcliff chapter 
+
+--> wiener full 
+--> mathmaticsl model henrichs paper
+--> wiener distribution extended 
+--> ratcliff variante (partial derivatives paper --> julia slack, extension to the .... section 7) --> mathematische basics von henrichs --> wiener full.. beschreiben parameter and thats it 
+--> equation 1 
+--> 5 ist sw und st0 = 0 
+
+
+
+
+
+## Accounting for Variation in the DDM Parameters
+
+The models described above capture individual differences in cognitive parameters through population-level distributions. To capture individual differences and to account for systematic variation due to experimental conditions or participant-level covariates, we extended the models by using design matrices. 
+
+- drift rate parameter als beispiel mit design matrix 
+- die anderen parameter only allow individual variability 
+- like lego, one can add to the design matrices to adapt the model to the application
+- The idea is to model the parameter of each individual-level distribution as a linear combination of predictors. By this we can include experimental conditions, continuous participant-level covariates, or both in the model in a flexible way. Also, different parameters can be associated with different sets of predictors, reflecting theoretical assumptions about which factors are expected to drive which cognitive processes.
+
+- here we use drift rate which is commonly a target of experimental manipulation 
+
+- parameters vom ez weg und nur anhand der dirft rate erklären mit design matrix 
 
 Suppose we have a design with $K = 2$, indexed by $k = 1, \ldots, K$ experimental conditions — for example, an easy and a hard condition — and a single continuous participant-level covariate $x_i$. The drift rate $\nu$ is modelled as a function of both the experimental condition and the participant-level covariate ($x_i$), reflecting the expectation that processing efficiency varies both across conditions and across individuals. Non-decision time $\tau$ is modelled as a function of the experimental condition only, as sensori-motor processing speed is not expected to systematically covary with $x_i$.
 
@@ -446,36 +498,6 @@ Finally, the univariate regression for non-decision time is
 $$\mu_{ik}^{(\tau)} = \mu^{(\tau)} + x_{ik2}\gamma^{(\tau)}$$
 Here, the participant-level covariate and the random slope are omitted.
 
-
-
-
-## Extended 4-Parameter EZ-DDM
-
-Previously, four-parameter DDM solutions [such as @rey2025neither??] used the Wiener distribution and fixed the three remianing parameters. Here, we opt for a new implementation using summary statistics for estimation. In principle, this could improve robustness and estimation efficiency.
-
-The EZ-DDM fixes the starting point at the midpoint between the two boundaries, $\beta_i = \frac{\alpha_i}{2}$ [@wagenmakers2007ez]. However, an a priori bias is common in practice (ref??). Participants may favour one response, if, for example, one of the two stimuli appears more often, or when one response is rewarded more strongly. If such a bias is present but not estimated by the model, its effect is absorbed by the remaining parameters and can distort estimates of those parameters.
-
-When we model $\beta_i$ as a free parameter, the probability of a correct response and the response time depend on where the process starts. With the diffusion coefficient fixed at $s = 1$, the probability of a correct response is
-$$
-\pi_{ci} = \frac{1 - \exp(-2\nu_i\beta_i)}{1 - \exp(-2\nu_i\alpha_i)},
-$$
-the formulas for the mean and variance of the RTs of correct responses can be found in the supplement. 
-
-
-Because a process that terminates at the lower boundary is equivalent to one that starts at $\alpha_i - \beta_i$ and terminates at the upper boundary, the equations for $M_{i}$ and $\Sigma_{i}$ replace $\beta_i$ by $\alpha_i - \beta_i$. A starting point closer to the correct boundary makes correct responses faster than incorrect responses, and a starting point closer to the error boundary makes incorrect responses faster than correct responses. Estimating $\beta_i$ therefore requires the RTs of incorrect trials for the estimation, such as the mean error RT,
-$$
-MRT_i \sim \text{Normal}\Bigg(M_{i},\ \frac{\Sigma_{i}}{J - C_i}\Bigg),
-$$
-and, if enough incorrect trials are available, the error RT variance ($VRT_i$; see EZ2 extension [@grasman2009mean].
-
-Adding those RTs reintroduces part of the problem that motivated the EZ model, namely the dependence on error trials, which are scarce in high-accuracy tasks. However, the hierarchical framework helps here: Participants with few errors are influenced more by the population distribution of $\beta$, so their bias estimates are shrunk toward the group mean instead of being unidentified. This is called regression to the mean (ref???). 
-
-
-## 5-parameter DDM
-
-
-
-## 7-parameter DDM
 
 
 
@@ -785,248 +807,12 @@ Therefore, we aimed to systematically assess the estimation accuracy of differen
 
 ## Simulation Results
 
-```{r}
-
-
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-
-PAPER_DIR   <- "/Users/annegiacobello/Desktop/EZ Paper "     
-PROJECT_DIR <- file.path(PAPER_DIR, "sv hier 2 cond")
-DATA_DIR    <- file.path(PROJECT_DIR, "data_sim_svhier")
-PLOT_DIR    <- file.path(PROJECT_DIR, "plots_model_comparison")
-dir.create(PLOT_DIR, showWarnings = FALSE, recursive = TRUE)
-
-reps <- 1:10
-
-
-
-
-read_summary <- function(file) {
-  function(dir, r) {
-    f <- file.path(dir, sprintf("rep%02d", r), file)
-    if (!file.exists(f)) return(NULL)
-    s <- if (grepl("\\.rds$", f)) readRDS(f) else read.csv(f, check.names = FALSE)
-    s <- as.data.frame(s)
-    if (!"q5"  %in% names(s) && "5%"  %in% names(s)) s$q5  <- s[["5%"]]
-    if (!"q95" %in% names(s) && "95%" %in% names(s)) s$q95 <- s[["95%"]]
-    s[, c("variable", "mean", "q5", "q95")]
-  }
-}
-
-
-MODELS <- list(
-
-  
-  EZ = list(
-    label = "EZ", colour = "#E69F00",
-    dir = file.path(PROJECT_DIR, "fits_ez_2conditions"),
-    reader = read_summary("summary_ez.csv"),
-    map = c(nu_intercept = "beta_nu_intercept", nu_c = "beta_nu_c",
-            alpha = "beta_alpha", tau = "beta_tau",
-            sd_nu_intercept = "sigma_nu_intercept", sd_nu_c = "sigma_nu_c",
-            sd_alpha = "sigma_alpha_intercept", sd_tau = "sigma_tau_intercept"),
-    transform = c(alpha = "exp"),
-    exclude = integer(0)
-  ),
-
-
-  EZ_bias = list(
-    label = "EZ + bias", colour = "#56B4E9",
-    dir = file.path(PROJECT_DIR, "fits_ez_bias_2conditions"),
-    reader = read_summary("summary_ez_bias.csv"),
-    map = c(nu_intercept = "beta_nu_intercept", nu_c = "beta_nu_c",
-            alpha = "beta_alpha", tau = "beta_tau", w = "w_pop_median",
-            sd_nu_intercept = "sigma_nu_intercept", sd_nu_c = "sigma_nu_c",
-            sd_alpha = "sigma_alpha_intercept", sd_tau = "sigma_tau_intercept",
-            sd_w = "sigma_w"),
-    transform = c(alpha = "exp"),
-    exclude = integer(0)
-  ),
-
-
-  DDM5 = list(
-    label = "DDM5", colour = "#009E73",
-    dir = file.path(PROJECT_DIR, "fits_ddm5_2conditions"),
-    reader = read_summary("summary_ddm5.csv"),
-    map = c(nu_intercept = "beta_nu_intercept", nu_c = "beta_nu_c",
-            alpha = "beta_alpha", tau = "beta_tau",
-            w = "w_pop_median", sv = "sv_pop_median",
-            sd_nu_intercept = "sigma_nu_intercept", sd_nu_c = "sigma_nu_c",
-            sd_alpha = "sigma_alpha_intercept", sd_tau = "sigma_tau_intercept",
-            sd_w = "sigma_w", sd_sv = "sigma_sv"),
-    transform = c(alpha = "exp"),     # beta_alpha is log --> exp = population median
-    exclude = integer(0)
-  ),
-
-
-   DDM7 = list(
-     label = "DDM7", colour = "#CC79A7",
-     dir = file.path(PROJECT_DIR, "fits_svhier"),
-     reader = read_summary("pop_summary.rds"),
-     map = c(nu_intercept = "beta_nu_intercept", nu_c = "beta_nu_c",
-             alpha = "alpha_pop_median", tau = "beta_tau",
-             w = "w_pop_median", sv = "sv_pop_median",
-             sw = "sw_pop_mean", st0 = "st0_pop_median",
-             sd_nu_intercept = "sigma_nu_intercept", sd_nu_c = "sigma_nu_c",
-             sd_alpha = "sigma_alpha_intercept", sd_tau = "sigma_tau_intercept",
-             sd_w = "sigma_w", sd_sv = "sigma_sv", sd_sw = "sigma_sw", sd_st0 = "sigma_st0"),
-     transform = c(),
-     exclude = integer(0)
-   )
-)
-
-
-show_model_variables <- function(key, r = 1) {
-  m <- MODELS[[key]]
-  s <- m$reader(m$dir, r)
-  if (is.null(s)) { cat("no summary found for", key, "rep", r, "in", m$dir, "\n"); return(invisible(NULL)) }
-  v <- unique(s$variable)
-  print(v[!grepl("\\[", v)])
-}
-
-
-
-read_model <- function(key) {
-  m <- MODELS[[key]]
-  if (!dir.exists(m$dir)) { message(m$label, ": folder not found --> skipped (", m$dir, ")"); return(NULL) }
-
-  out <- bind_rows(lapply(setdiff(reps, m$exclude), function(r) {
-    s <- m$reader(m$dir, r)
-    if (is.null(s)) return(NULL)
-    s$rep <- r
-    s
-  }))
-  if (nrow(out) == 0) { message(m$label, ": no summary files --> skipped"); return(NULL) }
-
-  not_found <- setdiff(unname(m$map), unique(out$variable))
-  if (length(not_found) > 0)
-    warning(m$label, ": not in the summaries: ", paste(not_found, collapse = ", "),
-            " --> check MODELS$", key, "$map (show_model_variables(\"", key, "\"))")
-
-  out <- out %>%
-    inner_join(tibble(param = names(m$map), variable = unname(m$map)), by = "variable") %>%
-    as.data.frame()
-
-  for (p in names(m$transform)) {
-    f   <- match.fun(m$transform[[p]])
-    idx <- out$param == p
-    for (cc in c("mean", "q5", "q95")) out[[cc]][idx] <- f(out[[cc]][idx])
-  }
-  out$model <- m$label
-  #cat(sprintf("%-10s reps: %s\n", m$label, paste(sort(unique(out$rep)), collapse = " ")))
-  out
-}
-
-est <- bind_rows(lapply(names(MODELS), read_model))
-if (nrow(est) == 0) stop("no model summaries found")
-
-
-
-truth_one <- function(r) {
-  d  <- file.path(DATA_DIR, sprintf("rep%02d", r))
-  tp <- readRDS(file.path(d, "true_population_parameters.rds"))
-  ts <- readRDS(file.path(d, "true_sd_parameters.rds"))
-  sp <- readRDS(file.path(d, "true_subject_parameters.rds"))
-  sw_frac <- tp$sw / (0.99 * 2 * pmin(sp$w, 1 - sp$w))
-  tibble(
-    rep = r,
-    param = c("nu_intercept", "nu_c", "alpha", "tau", "w", "sv", "sw", "st0",
-              "sd_nu_intercept", "sd_nu_c", "sd_alpha", "sd_tau", "sd_w", "sd_sv",
-              "sd_sw", "sd_st0"),
-    truth = c(tp$beta_nu1, tp$nu_c, exp(tp$beta_alpha1), tp$beta_tau, tp$w, tp$sv,
-              tp$sw, exp(mean(log(sp$st0))),
-              ts$sigma_nu_intercept, ts$sigma_nu_c, ts$sigma_alpha_intercept,
-              ts$sigma_tau_intercept, ts$sigma_w, ts$sigma_sv,
-              sd(qlogis(sw_frac)), sd(log(sp$st0)))
-  )
-}
-truth <- bind_rows(lapply(reps, truth_one))
-
-tp1 <- readRDS(file.path(DATA_DIR, "rep01", "true_population_parameters.rds"))
-tau_mean_ndt <- tp1$beta_tau * (1 + tp1$st0_raw)
-
-
-
-param_labels <- c(
-  nu_intercept    = "nu intercept",
-  nu_c            = "nu condition slope",
-  alpha           = "alpha (population median)",
-  tau             = "tau (population mean in seconds)",
-  w               = "w starting point (population median)",
-  sv              = "sv drift variability (population median)",
-  sw              = "sw starting point variability (mean)",
-  st0             = "st0 NDT variability (median, implied truth)",
-  sd_nu_intercept = "SD nu intercept",
-  sd_nu_c         = "SD nu condition",
-  sd_alpha        = "SD alpha (log)",
-  sd_tau          = "SD tau (seconds)",
-  sd_w            = "SD w (logit)",
-  sd_sv           = "SD sv (log)",
-  sd_sw           = "SD sw (logit fraction, implied truth)",
-  sd_st0          = "SD st0 (log, implied truth)"
-)
-
-
-model_order <- intersect(sapply(MODELS, `[[`, "label"), unique(est$model))
-n_mod       <- length(model_order)
-offsets     <- setNames((seq_len(n_mod) - (n_mod + 1) / 2) * (0.8 / n_mod), model_order)
-colours     <- setNames(sapply(MODELS, `[[`, "colour"), sapply(MODELS, `[[`, "label"))[model_order]
-
-plot_df <- est %>%
-  left_join(truth, by = c("rep", "param")) %>%
-  filter(param %in% names(param_labels)) %>%
-  mutate(model = factor(model, levels = model_order),
-         x     = rep + offsets[as.character(model)],
-         label = factor(param_labels[param], levels = param_labels)) %>%
-  droplevels()
-
-panels <- levels(plot_df$label)
-
-truth_plot <- truth %>%
-  filter(param %in% unique(plot_df$param)) %>%
-  mutate(label = factor(param_labels[param], levels = panels))
-truth_type  <- truth_plot %>% group_by(label) %>%
-  summarise(constant = n_distinct(round(truth, 6)) == 1, .groups = "drop")
-truth_const <- truth_plot %>% semi_join(filter(truth_type, constant), by = "label") %>%
-  distinct(label, truth)
-truth_var   <- truth_plot %>% semi_join(filter(truth_type, !constant), by = "label")
-
-ndt_ref <- tibble(label = factor(param_labels["tau"], levels = panels), y = tau_mean_ndt) %>%
-  filter(!is.na(label))
-
-p_pop <- ggplot(plot_df, aes(x = x, y = mean, colour = model)) +
-  geom_hline(data = truth_const, aes(yintercept = truth),
-             colour = "red", linetype = "dashed") +
-  geom_segment(data = truth_var,
-               aes(x = rep - 0.45, xend = rep + 0.45, y = truth, yend = truth),
-               colour = "red", linetype = "dashed", inherit.aes = FALSE) +
-  geom_hline(data = ndt_ref, aes(yintercept = y),
-             colour = "grey40", linetype = "dotted") +
-  geom_linerange(aes(ymin = q5, ymax = q95), linewidth = 0.5) +
-  geom_point(size = 1.8) +
-  facet_wrap(~ label, scales = "free_y", ncol = 4) +
-  scale_x_continuous(breaks = reps) +
-  scale_colour_manual(values = colours, name = NULL) +
-  labs(x = "Fitting Rep", y = "Posterior mean (with 90% CrI)",
-       caption = "Red dashed: true value. Grey dotted (tau): true mean NDT = t0 * (1 + st0_raw).") +
-  theme_minimal() +
-  theme(legend.position = "bottom",
-        strip.text = element_text(size = 8),
-        panel.grid.minor.x = element_blank())
-
-print(p_pop)
-n_rows <- ceiling(length(panels) / 4)
-ggsave(file.path(PLOT_DIR, "population_recovery_all_models.png"), p_pop,
-       width = 14, height = 2.6 * n_rows + 1, dpi = 300, bg = "white")
-
-
-
-```
 
 
 # Number of Parameters and Model Complexity
+
+Adding those error RTs reintroduces part of the problem that motivated the EZ model, namely the dependence on error trials, which are scarce in high-accuracy tasks. However, the hierarchical framework helps here: Participants with few errors are influenced more by the population distribution of $\beta$, so their bias estimates are shrunk toward the group mean instead of being unidentified. This is called regression to the mean (ref???). 
+
 
 ## Parameter Tradeoffs and Interpretability
 
@@ -1249,14 +1035,7 @@ model {
 
 
 ## Bias formulas 
-The mean and variance of the correct decision times are (ref!! @grasman2009mean)
-$$
-M_{ci} = \tau_i + \frac{1}{\nu_i}\Big[\alpha_i \coth(\nu_i\alpha_i) - \beta_i \coth(\nu_i\beta_i)\Big],
-$$
 
-$$
-\Sigma_{ci} = \frac{1}{\nu_i^2}\Big[\alpha_i^2 \,\text{csch}^2(\nu_i\alpha_i) - \beta_i^2 \,\text{csch}^2(\nu_i\beta_i)\Big] + \frac{1}{\nu_i^3}\Big[\alpha_i \coth(\nu_i\alpha_i) - \beta_i \coth(\nu_i\beta_i)\Big].
-$$
 
 ## Simulation Study of Parameter Recovery (first simulation)
 
