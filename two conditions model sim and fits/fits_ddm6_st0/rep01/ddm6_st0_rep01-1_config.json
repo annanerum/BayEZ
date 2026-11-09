@@ -1,0 +1,66 @@
+
+{
+  "stan_major_version" : "2",
+  "stan_minor_version" : "39",
+  "stan_patch_version" : "0",
+  "model_name" : "ddm_flex_model",
+  "start_datetime" : "2026-10-30 17:03:02 UTC",
+  "method" : {
+    "value" : "sample",
+    "sample" : {
+      "num_samples" : 500,
+      "num_warmup" : 500,
+      "save_warmup" : false,
+      "thin" : 1,
+      "adapt" : {
+        "engaged" : true,
+        "gamma" : 0.05,
+        "delta" : 0.9,
+        "kappa" : 0.75,
+        "t0" : 10,
+        "init_buffer" : 75,
+        "term_buffer" : 50,
+        "window" : 25,
+        "save_metric" : true
+      },
+      "algorithm" : {
+        "value" : "hmc",
+        "hmc" : {
+          "engine" : {
+            "value" : "nuts",
+            "nuts" : {
+              "max_depth" : 8
+            }
+          },
+          "metric" : {
+            "value" : "diag_e"
+          },
+          "metric_file" : "",
+          "stepsize" : 0.1,
+          "stepsize_jitter" : 0
+        }
+      },
+      "num_chains" : 1
+    }
+  },
+  "id" : 1,
+  "data" : {
+    "file" : "\/var\/folders\/jq\/wzr34xps3lv8n6nyq8_qjfqc0000gn\/T\/RtmpcqUmfb\/standata-d61d52fe3db3.json"
+  },
+  "init" : "\/var\/folders\/jq\/wzr34xps3lv8n6nyq8_qjfqc0000gn\/T\/RtmpcqUmfb\/init-d61d3184dd56_1.json",
+  "random" : {
+    "seed" : 9101
+  },
+  "output" : {
+    "file" : "\/Users\/annegiacobello\/Desktop\/EZ Paper \/sv hier 2 cond\/fits_ddm6_st0\/rep01\/ddm6_st0_rep01-1.csv",
+    "diagnostic_file" : "",
+    "refresh" : 5,
+    "sig_figs" : 8,
+    "profile_file" : "\/Users\/annegiacobello\/Desktop\/EZ Paper \/sv hier 2 cond\/fits_ddm6_st0\/rep01\/ddm_flex-profile-1.csv",
+    "save_cmdstan_config" : true
+  },
+  "num_threads" : 3,
+  "mpi_enabled" : false,
+  "stanc_version" : "stanc3 v2.39.0",
+  "stancflags" : "--name=ddm_flex_model"
+}
