@@ -63,7 +63,7 @@ fit_one_rep <- function(r) {
     iter_warmup = ITER_WARMUP, iter_sampling = ITER_SAMPLING,
     adapt_delta = 0.90, max_treedepth = 8, step_size = 0.1,
     refresh = 5, show_exceptions = FALSE,
-    output_dir = out_dir,                       # not the macOS temp folder
+    output_dir = out_dir,                       
     output_basename = sprintf("%s_%s", model_tag, rep_tag)
   )
   runtime_h <- as.numeric(difftime(Sys.time(), t_start, units = "hours"))
@@ -90,7 +90,7 @@ fit_one_rep <- function(r) {
   saveRDS(pop_summ,   file.path(out_dir, "pop_summary.rds"))
   saveRDS(subj_summ,  file.path(out_dir, "subj_summary.rds"))
   saveRDS(diag_df,    file.path(out_dir, "diagnostics.rds"))
-  saveRDS(d$subj_ids, file.path(out_dir, "subj_ids.rds"))      # which persons were fitted
+  saveRDS(d$subj_ids, file.path(out_dir, "subj_ids.rds"))    
 
   cat(sprintf("%s done | %.1f h | div=%d | treedepth=%d | max Rhat=%.3f | min ESS=%.0f\n",
               rep_tag, runtime_h, diag_df$divergences, diag_df$max_treedepth,
