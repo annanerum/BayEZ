@@ -47,7 +47,7 @@ data {
   vector[2] prior_sigma_w;
   vector[2] prior_sigma_sv;
 
-  
+  real<lower=0, upper=1> sw_upper;   // upper bound for sw 
 
   // guard limits
   real guard_a_max;      // max boundary separation
