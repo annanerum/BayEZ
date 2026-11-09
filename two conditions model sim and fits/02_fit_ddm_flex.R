@@ -1,9 +1,9 @@
 
 options(error = NULL)
 
-PAPER_DIR   <- "/Users/annegiacobello/Desktop/EZ Paper "     
-PROJECT_DIR <- file.path(PAPER_DIR, "sv hier 2 cond")
-source(file.path(PROJECT_DIR, "ddm_flex_helpers.R"))
+#PAPER_DIR   <- "/Users/annegiacobello/Desktop/EZ Paper "     
+#PROJECT_DIR <- file.path(PAPER_DIR, "sv hier 2 cond")
+#source(file.path(PROJECT_DIR, "ddm_flex_helpers.R"))
 
 
 ESTIMATE_SW   <- FALSE
@@ -23,7 +23,7 @@ dir.create(FIT_DIR, showWarnings = FALSE, recursive = TRUE)
 
 n_chains          <- 4
 n_cores           <- parallel::detectCores()
-threads_per_chain <- max(1, floor((n_cores - 1) / n_chains))   # leave one core for the Mac
+threads_per_chain <- max(1, floor((n_cores - 1) / n_chains))  
 
 cat(sprintf("model: %s | reps: %s | %d persons | %d + %d iterations | precision %g\ncores: %d --> %d chains x %d threads\n",
             model_tag, paste(REPS, collapse = " "), N_PERSON, ITER_WARMUP, ITER_SAMPLING,
