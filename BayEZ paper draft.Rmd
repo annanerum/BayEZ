@@ -336,42 +336,53 @@ Recently, a hierarchical extension of the EZ-DDM has been implemented by @chavez
 
 Following @chavez2025ez, $\mathbf{Y}_{ij}$ denotes the vector of the choice and response time of the $i$th person on the $j$th trial. $\mathbf{Y}_{ij}$ is modeled using a Wiener distribution,
 
-$$\mathbf{Y}_{ij} \sim \mbox{Wiener} \ (\alpha_i,\ \beta_i,\ \tau_i,\ \nu_i)$$
+\begin{equation}
+\mathbf{Y}_{ij} \sim \mbox{Wiener} \ (\alpha_i,\ \beta_i,\ \tau_i,\ \nu_i)
+(\#eq:wiener-ez)
+\end{equation}
 
 where the parameters are a participant-specific drift rate $\nu_i$, a boundary separation $\alpha_i$, and a non-decision time $\tau_i$. The fourth parameter of the Wiener distribution, the bias parameter $\beta_i$, is fixed at $\frac{\alpha_i}{2}$, (i.e., no response bias; see @wagenmakers2007ez).
 
-Instead of using the Wiender distribution as likelihood of the model, the EZ-DDM links the DDM üarameters to the data using the three summary statistics. The mean of the RTs of correct responses $MRT_i$, is approximated by a normal distribution:
-$$
+Instead of using the Wiener distribution as likelihood of the model, the EZ-DDM links the DDM parameters to the data using the three summary statistics. The mean of the RTs of correct responses $MRT_i$, is approximated by a normal distribution:
+\begin{equation}
 MRT_{ci} \sim \text{Normal} \ \Bigg(M_{ci},\ \frac{\Sigma_{ci}}{C_i} \Bigg),
-$$
+(\#eq:mrt-correct)
+\end{equation}
 where $M_{ci}$ denotes the mean parameter of the sampling distribution, $\Sigma_{ci}$ denotes the variance parameter of the response time distribution and $C_i$ denotes the number of correct trials. 
 
 When $C_i$ is sufficiently large ($>30$), the sampling distribution of the variance of the correct RTs, $VRT_i$, is also approximated by a normal distribution:
-$$
+\begin{equation}
 VRT_i \sim \text{Normal} \ \Bigg( \Sigma_{ci},\ 2 \frac{{\Sigma_{ci}} ^2}{C_i-1} \Bigg)
-$$
+(\#eq:vrt-correct)
+\end{equation}
 
 
 The parameters of these two sampling distributions can be linked to the DDM parameters. 
 
 $M_{ci}$ is 
-$$
-M_{ci} = \tau_i + \big( \frac{\alpha_i}{2\nu_i} \big) \big( \frac{u_i - 1}{u_i + 1} \big), 
-$$
+\begin{equation}
+M_{ci} = \tau_i + \big( \frac{\alpha_i}{2\nu_i} \big) \big( \frac{u_i - 1}{u_i + 1} \big),
+(\#eq:mean-correct)
+\end{equation}
 where $u_i = \exp(-\alpha_i \nu_i)$. 
 
 The variance parameter of the RTs of correct responses $\Sigma_{ci}$ is
-$$
+\begin{equation}
 \Sigma_{ci} = \big( \frac{\alpha_i}{2{\nu_i}^3} \big) \Bigg( \frac{1 - 2 \alpha_i \nu_i u_i - {u_i}^2}{(u_i + 1)^2} \Bigg).
-$$
+(\#eq:var-correct)
+\end{equation}
 
 For $J$ observations, the sampling distribution of the number of correct trials $C_i$ is:
-$$
+\begin{equation}
 C_i \sim \text{Binomial} \ \big(\pi_{ci},\ J \big)
-$$
+(\#eq:correct-binom)
+\end{equation}
 Here, the probability of a correct response is 
 
-$$\pi_{ci} = \frac{1}{\exp(-\alpha_i \nu_i) + 1}$$. 
+\begin{equation}
+\pi_{ci} = \frac{1}{\exp(-\alpha_i \nu_i) + 1}
+(\#eq:pc-ez)
+\end{equation}
 
 
 
@@ -381,34 +392,38 @@ The EZ-DDM fixes the starting point at the midpoint between the two boundaries, 
 
 Previously, four-parameter DDM solutions used the Wiener distribution and fixed the remaining parameters [e.g., @rey2025neither; @donzallaz2023creative]. Here, we opt for a new implementation using summary statistics for estimation (ref Nina).
 
-To model $\beta_i$ as a free parameter, the four DDM parameters are linked to four instead of three summary statistics. In addition to the mean response time of correct responses (equation number of the MRT), the mean response time of incorrect responses is
-$$
+To model $\beta_i$ as a free parameter, the four DDM parameters are linked to four instead of three summary statistics. In addition to the mean response time of correct responses (Equation \@ref(eq:mrt-correct)), the mean response time of incorrect responses is
+\begin{equation}
 MRT_{ei} \sim \text{Normal}\Bigg(M_{ei},\ \frac{\Sigma_{i}}{J - C_i}\Bigg).
-$$
+(\#eq:mrt-error)
+\end{equation}
 The variance of response times is then
 ...
 
 Note that the variance of all response times is used for the four parameter version of the EZ-DDM, not just the variance of correct response times. 
 
-The sampling distribution of the number of correct responses remains the same as in equation --> link to Ci. 
+The sampling distribution of the number of correct responses remains the same as in Equation \@ref(eq:correct-binom). 
 
 The probability of a correct response and the RT depend on where the process starts. The probability of a correct response is then
-$$
+\begin{equation}
 \pi_{ci} = \frac{1 - \exp(-2\nu_i\beta_i)}{1 - \exp(-2\nu_i\alpha_i)},
-$$
+(\#eq:pc-bias)
+\end{equation}
 
 The mean of the correct response times is
-$$
+\begin{equation}
 M_{ci} = \tau_i + \frac{1}{\nu_i}\Big[\alpha_i \coth(\nu_i\alpha_i) - \beta_i \coth(\nu_i\beta_i)\Big].
-$$
+(\#eq:mean-correct-bias)
+\end{equation}
 The mean of the error response times is
 __Mei formula__
 
 
-The variance of the resoonse times is
-$$
+The variance of the response times is
+\begin{equation}
 \Sigma_{i} = \frac{1}{\nu_i^2}\Big[\alpha_i^2 \,\text{csch}^2(\nu_i\alpha_i) - \beta_i^2 \,\text{csch}^2(\nu_i\beta_i)\Big] + \frac{1}{\nu_i^3}\Big[\alpha_i \coth(\nu_i\alpha_i) - \beta_i \coth(\nu_i\beta_i)\Big].
-$$
+(\#eq:var-bias)
+\end{equation}
 
 
 
@@ -449,9 +464,12 @@ Boundary separation $\alpha$ is also modelled as a function of the experimental 
 The parameters of the three truncated normal distributions are each modelled as a linear combination of predictors via a parameter-specific design matrix $\mathbf{X}_{ik}^{(\theta)}$ and a parameter-specific vector of regression coefficients $\boldsymbol{\gamma}_{\theta}$, where $\theta \in \{\nu, \alpha, \tau\}$.
 
 This means, for the drift rate we describe 
-$$\nu_{ik} \sim \mathcal{N}_{(-3,\,3)}\!\big(\mathbf{X}_{ik}^{(\nu)}, \boldsymbol{\gamma}_{\nu},\ \sigma_\nu^2\big)$$
+\begin{equation}
+\nu_{ik} \sim \mathcal{N}_{(-3,\,3)}\!\big(\mathbf{X}_{ik}^{(\nu)}, \boldsymbol{\gamma}_{\nu},\ \sigma_\nu^2\big)
+(\#eq:drift-design)
+\end{equation}
 The matrices then look like this:
-$$
+\begin{equation}
 \mathbf{X}_{ik}^{(\theta)} = 
 \begin{vmatrix}
 1 & x_{11} & x_{112}\\
@@ -459,43 +477,64 @@ $$
 1 & . & . \\
 1 & . & . \\
 1 &  x_{I1} & x_{IK2}
-\end{vmatrix}$$
+\end{vmatrix}
+(\#eq:design-matrix)
+\end{equation}
 
 and
 
-$$
+\begin{equation}
 \boldsymbol{\gamma}_{\nu} =
 \begin{vmatrix}
 \mu^{(\nu)} \\
 \gamma^{(\nu)}_1 \\
 \gamma^{(\nu)}_2
 \end{vmatrix}
-$$
+(\#eq:gamma-nu)
+\end{equation}
 The matrix of $\mathbf{X}_{ik}^{(\theta)}$ consists of a first column that refers to the intercept (all 1s), a second column that refers to the continuous predictor (participant-level covariate), called $x_{i1}$ for every participant $i, ..., I$, and a third column that refers to the categorical predictor (in this case: experimental conditions), called $x_{ik2}$ for every participant $i, ..., I$ and condition $k$ (in this case this can be $1$ or $2$). 
 
 The vector $\boldsymbol{\gamma}_{\nu}$ consists of the mean of the parameter ($\mu^{(\nu)}$), $\gamma^{(\nu)}_2$ (the average shift in drift rate from condition 1 to condition 2), multiplied with the condition dummy variable $x_{ik2}$ (here it is $0$ when $k=1$ and $1$ when $k=2$), and $\gamma^{(\nu)}_1$ (the covariate effect on drift rate), multiplied with the continuous participant-level covariate $x_{i1}$
 
 
 To simplify, consider the drift rate for one participant $i$. The drift rate can be expressed as a univariate regression formula:
-$$\mu_{ik}^{(\nu)} = \mu^{(\nu)} + x_{i1}\gamma_1^{(\nu)} + x_{ik2}\gamma_2^{(\nu)}$$
+\begin{equation}
+\mu_{ik}^{(\nu)} = \mu^{(\nu)} + x_{i1}\gamma_1^{(\nu)} + x_{ik2}\gamma_2^{(\nu)}
+(\#eq:drift-regression)
+\end{equation}
 
 where $\mu^{(\nu)}$ is the population mean drift rate in condition 1, with $\gamma_1^{(\nu)}$ being the effect of the participant-level covariate $x_{i1}$ (continuous predictor). $\gamma_2^{(\nu)}$ is the average shift in drift rate from condition 1 to condition 2. The term $x_{ik2}$ serves as a dummy variable, that takes the value of 0 when $k=1$ (condition 1) and 1 when $k=2$ (condition 2) and is therefore a categorical predictor (experimental conditions). 
 
 Similarly, the boundary separation parameter and the non-decision time parameter are described as
-$$\alpha_{ik} \sim \mathcal{N}_{(0.1,\,3.0)}\!\big(\mathbf{X}_{ik}^{(\alpha)}\,\boldsymbol{\gamma}_{\alpha},\ \sigma_\alpha^2\big)$$
+\begin{equation}
+\alpha_{ik} \sim \mathcal{N}_{(0.1,\,3.0)}\!\big(\mathbf{X}_{ik}^{(\alpha)}\,\boldsymbol{\gamma}_{\alpha},\ \sigma_\alpha^2\big)
+(\#eq:alpha-design)
+\end{equation}
 and
-$$\tau_{ik} \sim \mathcal{N}_{(0.05,\,\infty)}\!\big(\mathbf{X}_{ik}^{(\tau)}\,\boldsymbol{\gamma}_{\tau},\ \sigma_\tau^2\big)$$
+\begin{equation}
+\tau_{ik} \sim \mathcal{N}_{(0.05,\,\infty)}\!\big(\mathbf{X}_{ik}^{(\tau)}\,\boldsymbol{\gamma}_{\tau},\ \sigma_\tau^2\big)
+(\#eq:tau-design)
+\end{equation}
 The variance parameters $\sigma_\nu^2$, $\sigma_\alpha^2$, and $\sigma_\tau^2$ capture residual between-person variability after accounting for the predictors.
 
 The univariate regression formula for boundary separation is
-$$\mu_{ik}^{(\alpha)} = \mu^{(\alpha)} + x_{ik2}\!\left(\gamma^{(\alpha)} + v_i\right)$$
+\begin{equation}
+\mu_{ik}^{(\alpha)} = \mu^{(\alpha)} + x_{ik2}\!\left(\gamma^{(\alpha)} + v_i\right)
+(\#eq:alpha-regression)
+\end{equation}
 where $v_i$ is defined as 
-$$v_i \sim \mathcal{N}(0,\ \sigma_v^2)$$
+\begin{equation}
+v_i \sim \mathcal{N}(0,\ \sigma_v^2)
+(\#eq:random-slope)
+\end{equation}
 This is a by-participant random slope on the condition dummy $x_{ik2}$. The average condition effect on boundary separation is $\beta^{(\alpha)}$, and $v_i$ captures each participant's deviation from that average, reflecting individual differences in how much response caution changes between the easy and the hard condition.
 
 
 Finally, the univariate regression for non-decision time is
-$$\mu_{ik}^{(\tau)} = \mu^{(\tau)} + x_{ik2}\gamma^{(\tau)}$$
+\begin{equation}
+\mu_{ik}^{(\tau)} = \mu^{(\tau)} + x_{ik2}\gamma^{(\tau)}
+(\#eq:tau-regression)
+\end{equation}
 Here, the participant-level covariate and the random slope are omitted.
 
 
@@ -532,27 +571,31 @@ Since @grabowska2025individual modelled the effects of interest on drift rate an
 We tried to stay as close as possible to the analysis of @grabowska2025individual but also needed to specify a model that can be identified from summary statistics.
 
 The drift rate in cell $k$ was modelled as a function of condition, response type, and their interaction, with person-specific (random) slopes for all three effects and one intercept:
-$$
+\begin{equation}
 \nu_{ik} \sim \mathcal{N}\!\big(\gamma_{\nu,0} + \nu^{(c)}_i c_k + \nu^{(r)}_i r_k + \nu^{(cr)}_i c_k r_k,\ \sigma_\nu^2\big),
-$$
+(\#eq:app-drift)
+\end{equation}
 
-$$
+\begin{equation}
 \nu^{(c)}_i \sim \mathcal{N}(\gamma_{\nu,c},\ \sigma_{\nu,c}^2), \quad
 \nu^{(r)}_i \sim \mathcal{N}(\gamma_{\nu,r},\ \sigma_{\nu,r}^2), \quad
 \nu^{(cr)}_i \sim \mathcal{N}(\gamma_{\nu,cr},\ \sigma_{\nu,cr}^2).
-$$
+(\#eq:app-drift-slopes)
+\end{equation}
 
 Boundary separation was modelled with a person-specific (random) intercept and fixed effects of response type and condition:
-$$
+\begin{equation}
 \alpha_{ik} \sim \mathcal{N}_{(0.1,\,3.0)}\!\big(\alpha^{(0)}_i + \gamma_{\alpha,r}\, r_k + \gamma_{\alpha,c}\, c_k,\ \sigma_\alpha^2\big), \quad
 \alpha^{(0)}_i \sim \mathcal{N}(\gamma_{\alpha,0},\ \sigma_{\alpha,0}^2).
-$$
+(\#eq:app-alpha)
+\end{equation}
 
 Non-decision time had only a person-specific intercept:
-$$
+\begin{equation}
 \tau_{ik} \sim \mathcal{N}_{(0.05,\,\infty)}\!\big(\tau^{(0)}_i,\ \sigma_\tau^2\big), \quad
 \tau^{(0)}_i \sim \mathcal{N}(\gamma_{\tau,0},\ \sigma_{\tau,0}^2).
-$$
+(\#eq:app-tau)
+\end{equation}
 
 There were two types of standard deviations. The standard deviations $\sigma_\nu$, $\sigma_\alpha$, and $\sigma_\tau$ described how much the cell-level parameters of a person deviate from that person's predicted value. The standard deviations of the random effects ($\sigma_{\nu,c}$, $\sigma_{\nu,r}$, $\sigma_{\nu,cr}$, $\sigma_{\alpha,0}$, $\sigma_{\tau,0}$) described individual differences between participants.
 
@@ -561,53 +604,59 @@ There were two types of standard deviations. The standard deviations $\sigma_\nu
 ## Priors
 
 We used the priors of @grabowska2025individual so that differences in the results could be attributed to the model and not the priors. For the population-level effects on drift rate, we used
-$$
+\begin{equation}
 \begin{aligned}
 \gamma_{\nu,0} &\sim \mathcal{N}(0,\ 2^2), \\
 \gamma_{\nu,c} &\sim \mathcal{N}(0,\ 2^2), \\
 \gamma_{\nu,r} &\sim \mathcal{N}(0,\ 0.5^2), \\
 \gamma_{\nu,cr} &\sim \mathcal{N}(0,\ 0.5^2).
 \end{aligned}
-$$
+(\#eq:prior-drift)
+\end{equation}
 For boundary separation, we used
-$$
+\begin{equation}
 \begin{aligned}
 \gamma_{\alpha,0} &\sim \mathcal{N}(1,\ 1^2), \\
 \gamma_{\alpha,r} &\sim \mathcal{N}(0,\ 0.2^2), \\
 \gamma_{\alpha,c} &\sim \mathcal{N}(0,\ 1^2).
 \end{aligned}
-$$
+(\#eq:prior-alpha)
+\end{equation}
 
 The non-decision time intercept received the prior
-$$
+\begin{equation}
 \gamma_{\tau,0} \sim \mathcal{N}_{(0.05,\,0.45)}(0.1,\ 0.2^2).
-$$
+(\#eq:prior-tau)
+\end{equation}
 
 The standard deviations of the random effects that were also defined by @grabowska2025individual received gamma priors (shape, rate):
-$$
+\begin{equation}
 \begin{aligned}
 \sigma_{\nu,c} &\sim \text{Gamma}(1,\ 1), \\
 \sigma_{\alpha,0} &\sim \text{Gamma}(1,\ 1), \\
 \sigma_{\tau,0} &\sim \text{Gamma}(0.3,\ 1).
 \end{aligned}
-$$
+(\#eq:prior-gamma-sd)
+\end{equation}
 
 The random slopes of response type and the interaction on drift rate had no counterpart in @grabowska2025individual (effects were fixed) and received half-normal priors:
-$$
+\begin{equation}
 \begin{aligned}
 \sigma_{\nu,r} &\sim \mathcal{N}^{+}(0,\ 0.5^2), \\
 \sigma_{\nu,cr} &\sim \mathcal{N}^{+}(0,\ 0.5^2).
 \end{aligned}
-$$
+(\#eq:prior-halfnormal)
+\end{equation}
 
 The cell-level standard deviations were specific to our model, because the EZ DDM works with cells and not trials. They received weakly informative normal priors truncated at zero:
-$$
+\begin{equation}
 \begin{aligned}
 \sigma_\nu &\sim \mathcal{N}_{(0,\,\infty)}(0.3,\ 0.3^2), \\
 \sigma_\alpha &\sim \mathcal{N}_{(0,\,0.8)}(0.3,\ 0.3^2), \\
 \sigma_\tau &\sim \mathcal{N}_{(0,\,\infty)}(0.1,\ 0.15^2).
 \end{aligned}
-$$
+(\#eq:prior-cell-sd)
+\end{equation}
 
 ## Fitting the Model
 
