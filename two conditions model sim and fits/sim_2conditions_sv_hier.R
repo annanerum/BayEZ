@@ -10,7 +10,7 @@ dir.create(DATA_DIR, showWarnings = FALSE, recursive = TRUE)
 # condition effect on drift, alpha and tau are intercept-only
 # starting point bias at 0.55 
 # hierarchical: subject-level random effects on nu_intercept, nu_c, alpha_intercept, tau_intercept_raw,
-# w and sv (log scale)
+# w and sv, log scale
 
 n_subj   <- 100
 n_trials <- 200  
