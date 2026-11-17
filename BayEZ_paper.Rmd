@@ -388,43 +388,63 @@ Here, the probability of a correct response is
 
 ## Extended 4-Parameter EZ-DDM
 
-The EZ-DDM fixes the starting point at the midpoint between the two boundaries, $\beta_i = \frac{\alpha_i}{2}$ [@wagenmakers2007ez]. However, an a priori bias is common in practice (ref??). Participants may favour one response, if, for example, one of the two stimuli appears more often, or when one response is rewarded more strongly. If such a bias is present but not estimated by the model, its effect is absorbed by the remaining parameters and can distort estimates of those parameters.
+The EZ-DDM fixes the starting point at the midpoint between the two boundaries, $\beta_i = \frac{\alpha_i}{2}$ [@wagenmakers2007ez]. In practice, however, decision-makers are often biased towards one of the two responses. Such a bias arises, for example, when one of the two stimuli is presented more often or when one of the responses is rewarded more strongly, and it is typically captured by a shift of the starting point towards the favoured boundary [@leite2011cognitive; @mulder2012bias]. If a bias is present but not estimated, its effect is absorbed by the remaining parameters and can distort their estimates.
 
-Previously, four-parameter DDM solutions used the Wiener distribution and fixed the remaining parameters [e.g., @rey2025neither; @donzallaz2023creative]. Here, we opt for a new implementation using summary statistics for estimation (ref Nina).
+Previous four-parameter implementations of the DDM used the Wiener distribution as likelihood and fixed the across-trial variability parameters to zero [e.g., @rey2025neither; @donzallaz2023creative]. Here, we opt for a new implementation using summary statistics for estimation <!-- (ref Nina) -->.
 
-To model $\beta_i$ as a free parameter, the four DDM parameters are linked to four instead of three summary statistics. In addition to the mean response time of correct responses (Equation \@ref(eq:mrt-correct)), the mean response time of incorrect responses is
+When the process starts at the midpoint, correct and error RTs follow the same distribution, so the error RTs carry no information beyond the correct RTs. When the process starts closer to one of the boundaries, this does not hold: Responses at the closer boundary become more frequent and faster, and responses at the more distant boundary become rarer and slower. The bias is therefore expressed in the difference between correct and error RTs. To estimate $\beta_i$ as a free parameter, we link the four DDM parameters to four summary statistics: the number of correct responses $C_i$, the mean RT of correct responses $MRT_{ci}$, the mean RT of error responses $MRT_{ei}$, and the variance of all RTs $VRT_i$. Note that $VRT_i$ is here computed across correct and error responses.
+
+The sampling distribution of the number of correct responses remains the same as in equation \@ref(eq:correct-binom). The two mean RTs are approximated by normal distributions,
 \begin{equation}
-MRT_{ei} \sim \text{Normal}\Bigg(M_{ei},\ \frac{\Sigma_{i}}{J - C_i}\Bigg).
+MRT_{ci} \sim \text{Normal}\Bigg(M_{ci},\ \frac{\Sigma_{ci}}{C_i}\Bigg),
+(\#eq:mrt-correct-bias)
+\end{equation}
+\begin{equation}
+MRT_{ei} \sim \text{Normal}\Bigg(M_{ei},\ \frac{\Sigma_{ei}}{J - C_i}\Bigg),
 (\#eq:mrt-error)
 \end{equation}
-The variance of response times is then
-...
-
-Note that the variance of all response times is used for the four parameter version of the EZ-DDM, not just the variance of correct response times. 
-
-The sampling distribution of the number of correct responses remains the same as in Equation \@ref(eq:correct-binom). 
-
-The probability of a correct response and the RT depend on where the process starts. The probability of a correct response is then
+where $M_{ei}$ and $\Sigma_{ei}$ denote the mean and the variance of the error RT distribution, and $J - C_i$ is the number of error trials. The variance of all RTs is approximated by
 \begin{equation}
-\pi_{ci} = \frac{1 - \exp(-2\nu_i\beta_i)}{1 - \exp(-2\nu_i\alpha_i)},
+VRT_i \sim \text{Normal}\Bigg(\Sigma_i,\ 2\frac{\Sigma_i^2}{J - 1}\Bigg).
+(\#eq:vrt-all)
+\end{equation}
+
+The parameters of these sampling distributions follow from the moments of the first-passage times of a Wiener process with an arbitrary starting point [@grasman_mean_2009; @srivastava2016explicit]. The probability of a correct response is
+\begin{equation}
+\pi_{ci} = \frac{1 - \exp(-2\nu_i\beta_i)}{1 - \exp(-2\nu_i\alpha_i)}.
 (\#eq:pc-bias)
 \end{equation}
-
-The mean of the correct response times is
+The mean of the correct and of the error RTs are
 \begin{equation}
-M_{ci} = \tau_i + \frac{1}{\nu_i}\Big[\alpha_i \coth(\nu_i\alpha_i) - \beta_i \coth(\nu_i\beta_i)\Big].
+M_{ci} = \tau_i + \frac{1}{\nu_i}\Big[\alpha_i \coth(\nu_i\alpha_i) - \beta_i \coth(\nu_i\beta_i)\Big],
 (\#eq:mean-correct-bias)
 \end{equation}
-The mean of the error response times is
-__Mei formula__
-
-
-The variance of the response times is
 \begin{equation}
-\Sigma_{i} = \frac{1}{\nu_i^2}\Big[\alpha_i^2 \,\text{csch}^2(\nu_i\alpha_i) - \beta_i^2 \,\text{csch}^2(\nu_i\beta_i)\Big] + \frac{1}{\nu_i^3}\Big[\alpha_i \coth(\nu_i\alpha_i) - \beta_i \coth(\nu_i\beta_i)\Big].
-(\#eq:var-bias)
+M_{ei} = \tau_i + \frac{1}{\nu_i}\Big[\alpha_i \coth(\nu_i\alpha_i) - (\alpha_i - \beta_i) \coth\big(\nu_i(\alpha_i - \beta_i)\big)\Big].
+(\#eq:mean-error-bias)
 \end{equation}
+Equation \@ref(eq:mean-error-bias) is similar to equation \@ref(eq:mean-correct-bias) but the $\beta_i$ replaced by the distance between the starting point and the error boundary, $\alpha_i - \beta_i$. The same holds for the variances of the correct and of the error RTs:
+\begin{equation}
+\Sigma_{ci} = \frac{1}{\nu_i^2}\Big[\alpha_i^2 \,\text{csch}^2(\nu_i\alpha_i) - \beta_i^2 \,\text{csch}^2(\nu_i\beta_i)\Big] + \frac{1}{\nu_i^3}\Big[\alpha_i \coth(\nu_i\alpha_i) - \beta_i \coth(\nu_i\beta_i)\Big],
+(\#eq:var-correct-bias)
+\end{equation}
+\begin{equation}
+\begin{aligned}
+\Sigma_{ei} = \ & \frac{1}{\nu_i^2}\Big[\alpha_i^2 \,\text{csch}^2(\nu_i\alpha_i) - (\alpha_i - \beta_i)^2 \,\text{csch}^2\big(\nu_i(\alpha_i - \beta_i)\big)\Big] \\
+& + \frac{1}{\nu_i^3}\Big[\alpha_i \coth(\nu_i\alpha_i) - (\alpha_i - \beta_i) \coth\big(\nu_i(\alpha_i - \beta_i)\big)\Big].
+\end{aligned}
+(\#eq:var-error-bias)
+\end{equation}
+The variance of all RTs is a mixture of the two conditional distributions. By the law of total variance,
+\begin{equation}
+\Sigma_i = \pi_{ci}\,\Sigma_{ci} + (1 - \pi_{ci})\,\Sigma_{ei} + \pi_{ci}(1 - \pi_{ci})\,(M_{ci} - M_{ei})^2.
+(\#eq:var-all-bias)
+\end{equation}
+The non-decision time $\tau_i$ shifts both RT distributions by the same amount, so it cancels in the difference $M_{ci} - M_{ei}$ and does not affect the variances.
 
+If $\beta_i = \frac{\alpha_i}{2}$, equation \@ref(eq:pc-bias) reduces to equation \@ref(eq:pc-ez), the correct and error RTs have the same mean and variance ($M_{ci} = M_{ei}$, $\Sigma_{ci} = \Sigma_{ei}$), equations \@ref(eq:mean-correct-bias) and \@ref(eq:var-correct-bias) reduce to equations \@ref(eq:mean-correct) and \@ref(eq:var-correct), and the variance of all RTs equals the variance of the correct RTs, $\Sigma_i = \Sigma_{ci}$.
+
+The four-parameter DDM reintroduces a dependence on error responses because $MRT_{ei}$ can only be computed if a participant made at least one error, and with few errors it is a noisy estimate. In cells without errors, equation \@ref(eq:mrt-error) is not part of the likelihood anymore, and $\beta_i$ includes the accuracy, the variance of all RTs, and the population distribution of the starting point (see Section 'Number of Parameters and Model Complexity').
 
 
 ## 5-, 6- and 7-parameter DDM
@@ -438,7 +458,7 @@ However, the EZ DDM assumes no across-trial variability in parameters and is les
 --> wiener distribution extended 
 --> ratcliff variante (partial derivatives paper --> julia slack, extension to the .... section 7) --> mathematische basics von henrichs --> wiener full.. beschreiben parameter and thats it 
 --> equation 1 
---> 5 ist sw und st0 = 0 
+--> 5 ist sw=0 und st0 = free 
 
 
 
