@@ -458,7 +458,7 @@ However, the EZ DDM assumes no across-trial variability in parameters and is les
 --> wiener distribution extended 
 --> ratcliff variante (partial derivatives paper --> julia slack, extension to the .... section 7) --> mathematische basics von henrichs --> wiener full.. beschreiben parameter and thats it 
 --> equation 1 
---> 5 ist sw=0 und st0 = free 
+--> 5 ist mit st0 und sw=0 
 
 
 
