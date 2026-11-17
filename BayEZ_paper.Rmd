@@ -13,7 +13,7 @@ author:
   - name          : "Nina Ehmann"
     affiliation   : "3"
     
-  - name          : "Julia M. Haaf"
+  - name          : "Julia M. Haaf Test"
     affiliation   : "1"
     
 
