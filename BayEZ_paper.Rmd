@@ -452,7 +452,7 @@ However, the EZ DDM assumes no across-trial variability in parameters and is les
 --> neues ratcliff chapter 
 
 --> wiener full 
---> mathmaticsl model henrichs paper
+--> mathmatical model henrichs paper
 --> wiener distribution extended 
 --> ratcliff variante (partial derivatives paper --> julia slack, extension to the .... section 7) --> mathematische basics von henrichs --> wiener full.. beschreiben parameter and thats it 
 --> equation 1 
@@ -886,11 +886,11 @@ Adding those error RTs reintroduces part of the problem that motivated the EZ mo
 
 ## Model Predictions for Data
 - man braucht die parameter um komplexe daten dar zus tellen 
-- ratcliff und tuerlix paper: warum mbracht man das 
+- ratcliff und tuerlix paper: warum braucht man das 
 - welche muster kann das 5er nicht generieren was das 7er aber kann 
-- modeller sagen: das ist nciht das volle ddm damit kann man die und die muster nicht erzeugen 
+- modeller sagen: das ist nicht das volle ddm damit kann man die und die muster nicht erzeugen 
 - werden die intervalle im plot größer wenn man mehr parameter hat
-- vllt kann ez ne spannbreite darstellen aber vllt nur eine bestimmte kurve und andere lönnenzb auch andere kurven wie s kurve oder so 
+- vllt kann ez ne spannbreite darstellen aber vllt nur eine bestimmte kurve und andere können zb auch andere kurven wie eine s kurve oder so 
 
 
 \newpage
