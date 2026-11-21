@@ -869,7 +869,7 @@ Cite new Ratcliff chapter
 
 In addition, there are new (hierarchical Bayesian) estimation methods for the full DDM that have not been tested excessively.
 
-Therefore, we aimed to systematically assess the estimation accuracy of different versions of the diffusion model: From the full seven-parameter version, over a reduced five-parameter version, to the two EZ DDM implementations with four and three parameters, respectively. In the following, we provide an overview over the models, then go over the simulation setup we employed, and finally provide the results.
+Therefore, we aimed to systematically assess the estimation accuracy of different versions of the diffusion model: From the full seven-parameter version, over a reduced five-parameter version, to the two EZ DDM implementations with four and three parameters, respectively. In the following, we provide an overview over the models, then go over the simulation Setup we employed, and finally provide the results.
 
 ## Simulation Setup
 
